@@ -1,34 +1,26 @@
 """
 Core Configuration Module
 =========================
-Menggunakan Pydantic BaseSettings untuk konfigurasi aplikasi.
-Settings bisa di-override via environment variables.
+Settings dikonfigurasi via environment variables (prefix APP_).
 """
-
-from pathlib import Path
 
 from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    """Application settings yang bisa dikonfigurasi via env vars."""
+    """Application settings."""
 
     # --- App Info ---
     APP_NAME: str = "ChatAnalisis API"
     APP_DESCRIPTION: str = "API untuk Analisis Chat WhatsApp"
     APP_VERSION: str = "1.0.0"
-    DEBUG: bool = True
 
     # --- Server ---
     HOST: str = "0.0.0.0"
     PORT: int = 8000
 
-    # --- File Upload ---
-    UPLOAD_DIR: str = "uploads"
-    MAX_FILE_SIZE_MB: int = 10  # Maksimal 10 MB
-    ALLOWED_EXTENSIONS: list[str] = [
-        ".txt", ".zip"
-    ]
+    # --- File Upload (in-memory) ---
+    MAX_FILE_SIZE_MB: int = 10  # Batas raw file yang diterima (10 MB)
 
     # --- Rate Limiting ---
     RATE_LIMIT_UPLOAD: str = "5/minute"  # Max upload per IP per menit
@@ -48,13 +40,8 @@ class Settings(BaseSettings):
         """Konversi MB ke bytes."""
         return self.MAX_FILE_SIZE_MB * 1024 * 1024
 
-    @property
-    def upload_path(self) -> Path:
-        """Return Path object untuk upload directory."""
-        return Path(self.UPLOAD_DIR)
-
     model_config = {"env_prefix": "APP_", "case_sensitive": True}
 
 
-# Singleton instance — dipakai di seluruh aplikasi
+# Singleton instance
 settings = Settings()

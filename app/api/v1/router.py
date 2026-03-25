@@ -12,10 +12,8 @@ Best Practice:
 from fastapi import APIRouter
 
 from app.api.v1.files import router as files_router
-from app.api.v1.users import router as users_router
 
 router = APIRouter(prefix="/api/v1")
 
 # Include semua sub-routers
-router.include_router(users_router)
 router.include_router(files_router)

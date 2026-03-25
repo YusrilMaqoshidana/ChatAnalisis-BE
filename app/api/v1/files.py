@@ -1,13 +1,8 @@
 """
 File Upload API Endpoints
 =========================
-Semua endpoint terkait File Upload ada di sini.
-
-Best Practice:
-- Gunakan UploadFile dari FastAPI (bukan Form) untuk file upload
-- Validasi ada di service layer, route hanya menerima dan meneruskan
-- Rate limiting via slowapi untuk mencegah abuse
-- Dokumentasi endpoint lengkap untuk Swagger UI
+Hanya satu endpoint: upload file chat WhatsApp (.txt / .zip).
+Semua validasi ada di service layer. Rate limiting via slowapi.
 """
 
 from fastapi import APIRouter, Depends, File, Request, UploadFile
@@ -16,110 +11,24 @@ from slowapi.util import get_remote_address
 
 from app.api.deps import get_file_service
 from app.core.config import settings
-from app.models.user import (
-    ChatUploadResponse,
-    FileInfoResponse,
-    FileUploadResponse,
-    MultiFileUploadResponse,
-)
+from app.models.file_model import ChatUploadResponse
 from app.services.file_service import FileService
 
 router = APIRouter(prefix="/files", tags=["Files"])
 
-# Limiter instance — key berdasarkan IP address
+# Rate limiter berdasarkan IP address
 limiter = Limiter(key_func=get_remote_address)
-
-
-@router.post(
-    "/upload",
-    response_model=FileUploadResponse,
-    summary="Upload single file",
-    description="Upload satu file ke server. File akan divalidasi (ekstensi & ukuran) sebelum disimpan.",
-    responses={
-        400: {
-            "description": "File tidak valid",
-            "content": {
-                "application/json": {
-                    "examples": {
-                        "invalid_extension": {
-                            "summary": "Ekstensi tidak valid",
-                            "value": {
-                                "detail": "Ekstensi file tidak diperbolehkan. Ekstensi yang diperbolehkan: .txt, .zip"
-                            },
-                        },
-                        "file_too_large": {
-                            "summary": "File terlalu besar",
-                            "value": {
-                                "detail": "Ukuran file (15.0 MB) melebihi batas maksimal (10 MB)"
-                            },
-                        },
-                    }
-                }
-            },
-        }
-    },
-)
-async def upload_file(
-    file: UploadFile = File(..., description="File yang akan diupload"),
-    service: FileService = Depends(get_file_service),
-) -> FileUploadResponse:
-    """
-    **Upload File**
-
-    Upload satu file ke server dengan validasi:
-    - Ekstensi file harus sesuai daftar yang diperbolehkan
-    - Ukuran file tidak boleh melebihi batas maksimal (default: 10 MB)
-    - File akan disimpan dengan nama unik untuk menghindari overwrite
-    """
-    return await service.upload_file(file)
-
-
-@router.post(
-    "/upload-multiple",
-    response_model=MultiFileUploadResponse,
-    summary="Upload multiple files",
-    description="Upload beberapa file sekaligus ke server.",
-)
-async def upload_multiple_files(
-    files: list[UploadFile] = File(..., description="Files yang akan diupload"),
-    service: FileService = Depends(get_file_service),
-) -> MultiFileUploadResponse:
-    """
-    **Upload Multiple Files**
-
-    Upload beberapa file sekaligus. Setiap file akan divalidasi secara individual.
-    Jika satu file gagal validasi, proses akan berhenti dan error dikembalikan.
-    """
-    return await service.upload_multiple_files(files)
-
-
-@router.get(
-    "",
-    response_model=list[FileInfoResponse],
-    summary="List uploaded files",
-    description="Mengambil daftar semua file yang sudah diupload ke server.",
-)
-def list_uploaded_files(
-    service: FileService = Depends(get_file_service),
-) -> list[FileInfoResponse]:
-    """
-    **Daftar File**
-
-    Mengembalikan daftar semua file yang tersimpan di server
-    beserta metadata (nama, ukuran, waktu modifikasi).
-    """
-    return service.get_uploaded_files()
 
 
 @router.post(
     "/upload-chat",
     response_model=ChatUploadResponse,
-    summary="Upload file chat (.txt / .zip)",
+    summary="Upload file chat WhatsApp (.txt / .zip)",
     description=(
         "Upload file hasil export chat WhatsApp. "
         "Hanya menerima **.txt** atau **.zip**. "
         f"Rate limit: **{settings.RATE_LIMIT_UPLOAD}** per IP. "
-        "Diproses **sepenuhnya di memori** (tidak disimpan ke disk)."
+        "Diproses **sepenuhnya di memori** — tidak disimpan ke disk."
     ),
     responses={
         400: {

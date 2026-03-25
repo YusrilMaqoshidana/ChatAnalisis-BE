@@ -2,12 +2,6 @@
 FastAPI Application Entry Point
 ================================
 Inisialisasi dan konfigurasi utama FastAPI app.
-
-Best Practice:
-- App factory pattern (bisa dipakai untuk testing)
-- CORS middleware dikonfigurasi dari settings
-- Lifespan event untuk setup/teardown
-- Health check endpoint di root
 """
 
 from contextlib import asynccontextmanager
@@ -21,40 +15,25 @@ from slowapi.util import get_remote_address
 
 from app.api.v1.router import router as v1_router
 from app.core.config import settings
-from app.models.user import UserListResponse, UserResponse
-from app.services.user_service import user_service
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """
-    Lifespan event handler.
-    - Startup: buat folder uploads jika belum ada
-    - Shutdown: cleanup jika diperlukan
-    """
-    # === STARTUP ===
-    settings.upload_path.mkdir(parents=True, exist_ok=True)
-    print(f"📁 Upload directory ready: {settings.upload_path.absolute()}")
+    """Lifespan: startup & shutdown hooks."""
     print(f"🚀 {settings.APP_NAME} v{settings.APP_VERSION} is running!")
-
     yield
-
-    # === SHUTDOWN ===
     print("👋 Application shutting down...")
 
 
 def create_app() -> FastAPI:
-    """
-    Factory function untuk membuat FastAPI app.
-    Berguna untuk testing — bisa buat app dengan konfigurasi berbeda.
-    """
+    """Factory function untuk membuat FastAPI app."""
     app = FastAPI(
         title=settings.APP_NAME,
         description=settings.APP_DESCRIPTION,
         version=settings.APP_VERSION,
         lifespan=lifespan,
-        docs_url="/docs",          # Swagger UI
-        redoc_url="/redoc",        # ReDoc
+        docs_url="/docs",
+        redoc_url="/redoc",
         openapi_url="/openapi.json",
     )
 
@@ -84,6 +63,7 @@ def create_app() -> FastAPI:
             "app": settings.APP_NAME,
             "version": settings.APP_VERSION,
         }
+
     return app
 
 
