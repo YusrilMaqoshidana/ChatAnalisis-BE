@@ -5,7 +5,9 @@ Hanya satu endpoint: upload file chat WhatsApp (.txt / .zip).
 Semua validasi ada di service layer. Rate limiting via slowapi.
 """
 
-from fastapi import APIRouter, Depends, File, Request, UploadFile
+from typing import Literal
+
+from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
@@ -21,7 +23,7 @@ limiter = Limiter(key_func=get_remote_address)
 
 
 @router.post(
-    "/upload-chat",
+    "/analyzed",
     response_model=ChatUploadResponse,
     summary="Upload file chat WhatsApp (.txt / .zip)",
     description=(
@@ -74,6 +76,10 @@ limiter = Limiter(key_func=get_remote_address)
 async def upload_chat_file(
     request: Request,
     file: UploadFile = File(..., description="File chat (.txt atau .zip)"),
+    timeframe: Literal["week", "month", "year", "all"] = Form(
+        default="all",
+        description="Filter waktu data chat: week, month, year, atau all",
+    ),
     service: FileService = Depends(get_file_service),
 ) -> ChatUploadResponse:
     """
@@ -87,4 +93,4 @@ async def upload_chat_file(
     - ✅ Diproses di memori, **tidak disimpan ke disk**
     - ✅ Response berisi **UUID** sebagai identifier session
     """
-    return await service.process_chat_file(file)
+    return await service.process_chat_file(file, timeframe=timeframe)

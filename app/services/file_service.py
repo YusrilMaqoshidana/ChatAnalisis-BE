@@ -7,6 +7,7 @@ Fitur keamanan:
 - Validasi ekstensi: hanya .txt / .zip
 - Timeout via asyncio.wait_for
 - ZIP bomb protection
+- File .vcf dalam ZIP diabaikan (dianggap dihapus saat ekstraksi)
 - UUID sebagai identifier (tanpa disk write)
 """
 
@@ -20,28 +21,25 @@ from fastapi import HTTPException, UploadFile, status
 
 from app.core.config import settings
 from app.models.file_model import ChatUploadResponse
-from app.utils.file_utils import format_file_size
+from app.utils.file_utils import (
+    apply_full_preprocessing,
+    filter_messages_by_timeframe,
+    format_file_size,
+    parse_whatsapp_txt_bytes,
+)
 
 # Ekstensi yang diperbolehkan untuk upload file chat
 CHAT_ALLOWED_EXTENSIONS: frozenset[str] = frozenset({".txt", ".zip"})
 
 
 class FileService:
-    """Service untuk memproses file chat WhatsApp di memori."""
 
-    async def process_chat_file(self, file: UploadFile) -> ChatUploadResponse:
-        """
-        Proses file chat sepenuhnya di memori (tanpa simpan ke disk).
+    _REMOVED_ZIP_SUFFIXES: tuple[str, ...] = (".vcf",)
 
-        Keamanan:
-        - Validasi ekstensi: hanya .txt / .zip
-        - Timeout: UPLOAD_TIMEOUT_SECONDS
-        - ZIP bomb protection: ZIP_MAX_EXTRACTED_MB
-        - UUID sebagai file identifier
-        """
+    async def process_chat_file(self, file: UploadFile, timeframe: str = "all") -> ChatUploadResponse:
         try:
             result = await asyncio.wait_for(
-                self._do_process_chat_file(file),
+                self._do_process_chat_file(file, timeframe=timeframe),
                 timeout=settings.UPLOAD_TIMEOUT_SECONDS,
             )
         except asyncio.TimeoutError:
@@ -55,7 +53,7 @@ class FileService:
             )
         return result
 
-    async def _do_process_chat_file(self, file: UploadFile) -> ChatUploadResponse:
+    async def _do_process_chat_file(self, file: UploadFile, timeframe: str = "all") -> ChatUploadResponse:
         """Internal: logika proses file chat."""
         # 1. Validasi nama file
         if not file.filename:
@@ -91,36 +89,61 @@ class FileService:
 
         # 5. ZIP bomb protection
         extracted_size: int | None = None
+        parsed_messages: list[dict[str, str]] = []
         if ext == ".zip":
             extracted_size = self._check_zip_bomb(content)
+            parsed_messages = self._parse_zip_txt_messages(content)
+        else:
+            parsed_messages = parse_whatsapp_txt_bytes(content)
+
+        selected_messages, timeframe_filtered_count = filter_messages_by_timeframe(parsed_messages, timeframe=timeframe)
+        preprocessed_messages, preprocessing_stats = apply_full_preprocessing(selected_messages)
 
         # 6. UUID sebagai identifier session (tidak simpan ke disk)
         file_id = str(uuid.uuid4())
 
         return ChatUploadResponse(
             file_id=file_id,
-            original_filename=file.filename,
-            size_bytes=file_size,
-            size_human=format_file_size(file_size),
-            content_type=file.content_type,
-            extracted_size_bytes=extracted_size,
+            parsed_messages=preprocessed_messages,
         )
 
+    def _parse_zip_txt_messages(self, content: bytes) -> list[dict[str, str]]:
+        """Ekstrak semua file .txt dari ZIP, lalu parse menjadi baris chat."""
+        parsed_rows: list[dict[str, str]] = []
+
+        try:
+            with zipfile.ZipFile(io.BytesIO(content)) as zf:
+                for info in zf.infolist():
+                    if info.is_dir():
+                        continue
+
+                    name_lower = info.filename.lower()
+                    if name_lower.endswith(self._REMOVED_ZIP_SUFFIXES):
+                        continue
+                    if not name_lower.endswith(".txt"):
+                        continue
+
+                    file_bytes = zf.read(info)
+                    parsed_rows.extend(parse_whatsapp_txt_bytes(file_bytes))
+        except zipfile.BadZipFile:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="File ZIP tidak valid atau rusak.",
+            )
+
+        return parsed_rows
+
     def _check_zip_bomb(self, content: bytes) -> int:
-        """
-        Hitung total ukuran file di dalam ZIP sebelum diekstrak.
-
-        Returns:
-            Total extracted size dalam bytes.
-
-        Raises:
-            HTTPException 400: Jika melebihi ZIP_MAX_EXTRACTED_MB atau ZIP rusak.
-        """
         max_bytes = settings.ZIP_MAX_EXTRACTED_MB * 1024 * 1024
 
         try:
             with zipfile.ZipFile(io.BytesIO(content)) as zf:
-                total_extracted = sum(info.file_size for info in zf.infolist())
+                # Abaikan file contact card (*.vcf) dari hasil ekstraksi ZIP.
+                total_extracted = sum(
+                    info.file_size
+                    for info in zf.infolist()
+                    if not info.is_dir() and not info.filename.lower().endswith(self._REMOVED_ZIP_SUFFIXES)
+                )
         except zipfile.BadZipFile:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -140,6 +163,4 @@ class FileService:
 
         return total_extracted
 
-
-# Singleton instance
 file_service = FileService()

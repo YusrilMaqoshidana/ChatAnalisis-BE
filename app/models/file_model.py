@@ -7,25 +7,21 @@ Hanya schema yang dibutuhkan untuk endpoint upload chat.
 from pydantic import BaseModel, Field
 
 
-class ChatUploadResponse(BaseModel):
-    """
-    Response untuk upload file chat (in-memory, tanpa simpan ke disk).
+class ParsedChatMessage(BaseModel):
+    tanggal: str = Field(..., description="Tanggal chat", examples=["06/04/26"])
+    waktu: str = Field(..., description="Waktu chat", examples=["9.41 AM"])
+    pengirim: str = Field(..., description="Nama pengirim", examples=["Budi"])
+    pesan: str = Field(..., description="Isi pesan", examples=["Halo semua"])
+    pesan_preprocessed: str = Field(
+        ...,
+        description="Pesan setelah preprocessing (normalisasi + cleaning)",
+        examples=["halo semua"],
+    )
 
-    Fields:
-        file_id: UUID v4 sebagai identifier session.
-        original_filename: Nama file asli dari client.
-        size_bytes: Ukuran raw file yang diterima.
-        size_human: Ukuran dalam format human-readable.
-        content_type: MIME type file.
-        extracted_size_bytes: Total ukuran isi setelah diekstrak (khusus .zip).
-    """
+
+class ChatUploadResponse(BaseModel):
     file_id: str = Field(..., description="UUID v4 — identifier session", examples=["a1b2c3d4-e5f6-..."])
-    original_filename: str = Field(..., description="Nama file asli", examples=["chat.txt"])
-    size_bytes: int = Field(..., description="Ukuran raw file dalam bytes", examples=[204800])
-    size_human: str = Field(..., description="Ukuran human-readable", examples=["200.0 KB"])
-    content_type: str | None = Field(default=None, description="MIME type", examples=["text/plain"])
-    extracted_size_bytes: int | None = Field(
-        default=None,
-        description="Total bytes setelah ekstraksi ZIP (None jika bukan .zip)",
-        examples=[1048576],
+    parsed_messages: list[ParsedChatMessage] = Field(
+        default_factory=list,
+        description="Hasil akhir parsing + preprocessing",
     )
