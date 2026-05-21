@@ -1,41 +1,30 @@
-"""
-Chat Filtering Module
-======================
-Berfungsi untuk filter pesan berdasarkan timeframe (week, month, year, all).
-
-Konteks penggunaan:
-- Preprocessing data chat besar biasanya lebih efisien jika dibatasi timeframe
-- Default: all (semua data)
-- Data diurutkan descending by datetime (terbaru dulu)
-"""
-
 from datetime import date, datetime
-from typing import Literal
 
 
-def _parse_chat_datetime(row: dict[str, str]) -> datetime | None:
-    """
-    Parse field tanggal + waktu dari hasil parsing chat menjadi datetime object.
+def _subtract_year(anchor: date) -> date:
+    try:
+        return anchor.replace(year=anchor.year - 1)
+    except ValueError:
+        return anchor.replace(month=2, day=28, year=anchor.year - 1)
 
-    Format yang didukung:
-    - DD/MM/YY HH.MM AM/PM
-    - DD/MM/YY HH.MM
-    - DD/MM/YY HH:MM
 
-    Args:
-        row: Dict hasil parsing chat dengan keys "tanggal" dan "waktu"
+def _parse_chat_datetime(row: dict) -> datetime | None:
+    timestamp_value = row.get("timestamp")
 
-    Returns:
-        datetime object atau None jika parse gagal
+    if isinstance(timestamp_value, datetime):
+        return timestamp_value
 
-    Examples:
-        >>> row = {"tanggal": "05/04/26", "waktu": "9.51 PM"}
-        >>> dt = _parse_chat_datetime(row)
-        >>> dt.day
-        5
-    """
-    tanggal = row.get("tanggal", "").strip()
-    waktu = row.get("waktu", "").strip()
+    if isinstance(timestamp_value, str):
+        normalized_timestamp = timestamp_value.strip()
+        if normalized_timestamp:
+            try:
+                return datetime.fromisoformat(normalized_timestamp)
+            except ValueError:
+                pass
+
+    # Fallback backward compatibility (format lama tanggal + waktu)
+    tanggal = str(row.get("tanggal", "")).strip()
+    waktu = str(row.get("waktu", "")).strip()
     if not tanggal or not waktu:
         return None
 
@@ -49,54 +38,19 @@ def _parse_chat_datetime(row: dict[str, str]) -> datetime | None:
 
 
 def filter_messages_by_timeframe(
-    messages: list[dict[str, str]],
-    timeframe: Literal["week", "month", "year", "all"] = "all",
-) -> tuple[list[dict[str, str]], int]:
-    """
-    Filter pesan berdasarkan timeframe relatif ke hari ini.
+    messages: list[dict],
+    timeframe: str = "year",
+    anchor_date: date | None = None,
+) -> tuple[list[dict], int]:
+    normalized_timeframe = timeframe.lower().strip()
+    if normalized_timeframe not in {"week", "month", "year"}:
+        normalized_timeframe = "year"
 
-    Ketentuan:
-    - week: Hanya pesan dalam minggu kalender yang sama dengan hari ini (ISO calendar)
-    - month: Hanya pesan dalam bulan yang sama dengan hari ini
-    - year: Hanya pesan dalam tahun yang sama dengan hari ini
-    - all: Semua pesan (tidak ada filter tanggal)
-
-    Data diurutkan descending by datetime sehingga yang terbaru diproses duluan.
-
-    Args:
-        messages: List of dict hasil parsing chat
-        timeframe: Pilihan rentang waktu (default: "all")
-
-    Returns:
-        Tuple (filtered_messages, filtered_out_count) dimana:
-        - filtered_messages: List pesan yang masuk kriteria timeframe
-        - filtered_out_count: Jumlah pesan yang terbuang
-
-    Examples:
-        >>> messages = [
-        ...     {"tanggal": "06/04/26", "waktu": "10.00 AM", ...},
-        ...     {"tanggal": "01/01/26", "waktu": "10.00 AM", ...},
-        ... ]
-        >>> filtered, dropped = filter_messages_by_timeframe(messages, timeframe="month")
-        >>> len(filtered)
-        1
-        >>> dropped
-        1
-    """
-    normalized_timeframe: str = timeframe.lower().strip()  # type: ignore
-    if normalized_timeframe not in {"week", "month", "year", "all"}:
-        normalized_timeframe = "all"
-
-    today = date.today()
-    selected: list[tuple[datetime | None, dict[str, str]]] = []
+    anchor = anchor_date or date.today()
+    selected: list[tuple[datetime | None, dict]] = []
 
     for row in messages:
         chat_dt = _parse_chat_datetime(row)
-
-        # Untuk "all", masukkan semua (tidak peduli datetime parsing success atau fail)
-        if normalized_timeframe == "all":
-            selected.append((chat_dt, row))
-            continue
 
         # Untuk timeframe tertentu, skip jika parsing datetime gagal
         if chat_dt is None:
@@ -107,15 +61,15 @@ def filter_messages_by_timeframe(
         # Cek kriteria timeframe
         if normalized_timeframe == "week":
             # Bandingkan ISO calendar (year, week number) dari chat_date vs today
-            if chat_date.isocalendar()[:2] == today.isocalendar()[:2]:
+            if chat_date.isocalendar()[:2] == anchor.isocalendar()[:2]:
                 selected.append((chat_dt, row))
         elif normalized_timeframe == "month":
             # Bandingkan year + month
-            if chat_date.year == today.year and chat_date.month == today.month:
+            if chat_date.year == anchor.year and chat_date.month == anchor.month:
                 selected.append((chat_dt, row))
         elif normalized_timeframe == "year":
-            # Bandingkan year saja
-            if chat_date.year == today.year:
+            # Bandingkan 1 tahun terakhir dari anchor date
+            if _subtract_year(anchor) <= chat_date <= anchor:
                 selected.append((chat_dt, row))
 
     # Sort descending by datetime (terbaru dulu) agar preprocessing prioritas data terbaru

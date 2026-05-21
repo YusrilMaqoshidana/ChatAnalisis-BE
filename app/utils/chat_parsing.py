@@ -65,79 +65,99 @@ def _normalize_whatsapp_line(text: str) -> str:
     return re.sub(r"\s+", " ", normalized).strip()
 
 
-def parse_whatsapp_txt_content(content: str) -> list[dict[str, str]]:
+def _build_timestamp(
+    date_str: str,
+    time_str: str,
+    am_pm: str
+) -> datetime:
     """
-    Parse konten txt export WhatsApp menjadi list pesan terstruktur.
-
-    Setiap pesan berisi:
-    - tanggal: DD/MM/YY
-    - waktu: HH.MM AM/PM
-    - pengirim: Nama pengirim atau "SYSTEM" untuk notifikasi
-    - pesan: Isi pesan (support multi-line continuation)
-
-    Args:
-        content: String isi file txt
-
-    Returns:
-        List of dict berisi setiap pesan dengan keys: tanggal, waktu, pengirim, pesan
-
-    Examples:
-        >>> txt = "05/04/26 9.51 PM - Budi: Halo"
-        >>> msgs = parse_whatsapp_txt_content(txt)
-        >>> msgs[0]["pengirim"]
-        "Budi"
+    Convert WhatsApp date + time menjadi datetime object.
     """
-    rows: list[dict[str, str]] = []
-    current_message: dict[str, str] | None = None
+
+    raw = f"{date_str} {time_str} {am_pm}"
+
+    return datetime.strptime(
+        raw,
+        "%d/%m/%y %I.%M %p"
+    )
+
+
+def parse_whatsapp_txt_content(
+    content: str
+) -> list[dict]:
+
+    rows: list[dict] = []
+
+    current_message: dict | None = None
 
     for raw_line in content.splitlines():
+
         line = _normalize_whatsapp_line(raw_line)
+
         if not line:
             continue
 
-        # Cek apakah baris ini awal pesan baru (format: tanggal waktu - pengirim: pesan)
+        # Pesan biasa
         match = WHATSAPP_MESSAGE_PATTERN.match(line)
+
         if match:
-            # Simpan pesan sebelumnya jika ada
+
             if current_message:
                 rows.append(current_message)
 
             date, time, am_pm, sender, message = match.groups()
+
+            timestamp = _build_timestamp(
+                date,
+                time,
+                am_pm
+            )
+
             current_message = {
-                "tanggal": date,
-                "waktu": f"{time} {am_pm}",
+                "timestamp": timestamp,
                 "pengirim": sender,
                 "pesan": message,
             }
+
             continue
 
-        # Tangani notifikasi sistem yang tetap punya timestamp, tapi tidak punya ":"
+        # System message
         system_match = WHATSAPP_SYSTEM_LINE_PATTERN.match(line)
+
         if system_match:
+
             if current_message:
                 rows.append(current_message)
 
             date, time, am_pm, message = system_match.groups()
+
+            timestamp = _build_timestamp(
+                date,
+                time,
+                am_pm
+            )
+
             current_message = {
-                "tanggal": date,
-                "waktu": f"{time} {am_pm}",
+                "timestamp": timestamp,
                 "pengirim": "SYSTEM",
                 "pesan": message,
             }
+
             continue
 
-        # Jika bukan awal pesan baru, tambahkan sebagai lanjutan pesan sebelumnya
+        # Multiline continuation
         if current_message:
-            current_message["pesan"] = f"{current_message['pesan']} {line}".strip()
+            current_message["pesan"] = (
+                f"{current_message['pesan']} {line}"
+            ).strip()
 
-    # Simpan pesan terakhir
     if current_message:
         rows.append(current_message)
 
     return rows
 
 
-def parse_whatsapp_txt_bytes(content: bytes, encoding: str = "utf-8") -> list[dict[str, str]]:
+def parse_whatsapp_txt_bytes(content: bytes, encoding: str = "utf-8") -> list[dict]:
     """
     Parse bytes konten WhatsApp menjadi list pesan terstruktur.
 

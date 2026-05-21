@@ -7,8 +7,8 @@ Orchestrator untuk chat parsing, preprocessing, filtering, dan export.
 Struktur modul:
 - chat_parsing.py: Parsing raw WhatsApp TXT ke format terstruktur
 - chat_preprocessing.py: Normalisasi, cleaning, dan deduplication
-- chat_filtering.py: Filter berdasarkan timeframe (week/month/year/all)
-- csv_export.py: Export ke CSV
+- chat_filtering.py: Filter berdasarkan timeframe (week/month/year)
+- csv_export.py: Export ke CSV dengan kolom timestamp, pengirim, pesan
 - format_utils.py: Utility formatting (file size, dll)
 
 Gunakan functions dibawah untuk workflow lengkap.
@@ -18,6 +18,9 @@ Contoh penggunaan:
     2. Filter by timeframe -> filter_messages_by_timeframe(messages, timeframe="week")
     3. Apply preprocessing -> apply_full_preprocessing(filtered_messages)
     4. Export ke CSV -> whatsapp_rows_to_csv(processed_rows)
+
+Output CSV menggunakan kolom:
+    timestamp, pengirim, pesan
 """
 
 # Re-export dari submodules untuk kemudahan akses

@@ -6,13 +6,22 @@ Berfungsi untuk export hasil parsing chat ke format CSV.
 
 import csv
 import io
+from datetime import datetime
 
 
-def whatsapp_rows_to_csv(content_rows: list[dict[str, str]]) -> str:
+def _format_csv_value(value: object) -> str:
+    if isinstance(value, datetime):
+        return value.isoformat(sep=" ", timespec="seconds")
+    if value is None:
+        return ""
+    return str(value)
+
+
+def whatsapp_rows_to_csv(content_rows: list[dict[str, object]]) -> str:
     """
     Konversi hasil parse chat menjadi CSV string.
 
-    Header: Tanggal, Waktu, Pengirim, Pesan
+    Header: timestamp, pengirim, pesan
 
     Args:
         content_rows: List of dict berisi rows (hasil dari parsing atau preprocessing)
@@ -22,20 +31,19 @@ def whatsapp_rows_to_csv(content_rows: list[dict[str, str]]) -> str:
 
     Examples:
         >>> rows = [
-        ...     {"tanggal": "05/04/26", "waktu": "9.51 PM", "pengirim": "Budi", "pesan": "Halo"},
+        ...     {"timestamp": datetime(2026, 4, 5, 21, 51), "pengirim": "Budi", "pesan": "Halo"},
         ... ]
         >>> csv_str = whatsapp_rows_to_csv(rows)
-        >>> "Tanggal,Waktu,Pengirim,Pesan" in csv_str
+        >>> "timestamp,pengirim,pesan" in csv_str
         True
     """
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(["Tanggal", "Waktu", "Pengirim", "Pesan"])
+    writer.writerow(["timestamp", "pengirim", "pesan"])
 
     for row in content_rows:
         writer.writerow([
-            row.get("tanggal", ""),
-            row.get("waktu", ""),
+            _format_csv_value(row.get("timestamp", "")),
             row.get("pengirim", ""),
             row.get("pesan", ""),
         ])
