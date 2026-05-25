@@ -1,67 +1,83 @@
 # ChatAnalisis API
 
-FastAPI project dengan arsitektur **layered/clean architecture** — berisi API untuk **Upload File** dan **Get User** (dummy data).
+FastAPI backend untuk analisis chat WhatsApp menggunakan BERTopic, MinIO, Redis, dan background processing.
 
-## 📂 Struktur Project
+## Arsitektur Saat Ini
 
-```
-ChatAnalisis/
-├── app/
-│   ├── main.py              # Entry point
-│   ├── core/config.py       # Settings & konfigurasi
-│   ├── models/user.py       # Pydantic schemas
-│   ├── repositories/        # Data access layer (dummy data)
-│   ├── services/            # Business logic
-│   ├── api/v1/              # API routes (versioned)
-│   └── utils/               # Helper functions
-├── uploads/                 # Folder penyimpanan file
-└── requirements.txt
-```
+- `POST /topics/train` menerima upload file lalu memulai background task.
+- Progress job disimpan di Redis (TTL 24 jam).
+- BERTopic model dimuat/disimpan ke MinIO.
+- Jika model belum ada: `fit_transform()`.
+- Jika model sudah ada: `partial_fit()`.
+- Progress bisa dipantau via REST polling atau WebSocket progress stream.
 
-## 🚀 Quick Start
-
-### 1. Install Dependencies
+## Quick Start
 
 ```bash
-cd ChatAnalisis
+cd /home/usereal/Projects/Python/ChatAnalisis-BE
+python -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
-```
-
-### 2. Run Server
-
-```bash
+cp .env.example .env
 uvicorn app.main:app --reload
 ```
 
-### 3. Buka API Docs
+## Endpoint (Recommended)
 
-- **Swagger UI**: [http://localhost:8000/docs](http://localhost:8000/docs)
-- **ReDoc**: [http://localhost:8000/redoc](http://localhost:8000/redoc)
+- Health check: `GET /`
+- Start training job: `POST /topics/train`
+- Poll progress: `GET /topics/progress/{job_id}`
+- Stream progress: `ws://localhost:8000/topics/ws/{job_id}`
 
-## 📡 API Endpoints
+## Request `POST /topics/train`
 
-| Method | Endpoint                        | Deskripsi             |
-| ------ | ------------------------------- | --------------------- |
-| `GET`  | `/`                             | Health check          |
-| `GET`  | `/api/v1/users`                 | List semua user       |
-| `GET`  | `/api/v1/users?search=budi`     | Cari user             |
-| `GET`  | `/api/v1/users/{id}`            | Detail user by ID     |
-| `POST` | `/api/v1/files/upload`          | Upload single file    |
-| `POST` | `/api/v1/files/upload-multiple` | Upload multiple files |
-| `GET`  | `/api/v1/files`                 | List uploaded files   |
+`multipart/form-data` fields:
 
-## 🏗️ Arsitektur
+- `file`: `.txt` atau `.zip`
+- `timeframe`: `week | month | year` (kosong = train semua data)
 
+Response:
+
+```json
+{
+  "status": "success",
+  "message": "Training started",
+  "data": {
+    "job_id": "uuid"
+  }
+}
 ```
-Request → API Route → Service → Repository → Data Source
-                         ↓
-                       Utils (file handling, validation)
+
+## Response `GET /topics/progress/{job_id}`
+
+```json
+{
+  "status": "success",
+  "message": "Job progress",
+  "data": {
+    "job_id": "uuid",
+    "status": "processing",
+    "progress": 70,
+    "message": "Updating BERTopic model"
+  }
+}
 ```
 
-| Layer          | Tanggung Jawab                  |
-| -------------- | ------------------------------- |
-| **API Route**  | Terima request, return response |
-| **Service**    | Business logic, validasi        |
-| **Repository** | Akses data (dummy/database)     |
-| **Model**      | Schema validasi (Pydantic)      |
-| **Utils**      | Helper functions                |
+## WebSocket Progress Message `topics/ws/{job_id}`
+
+```json
+{"status": "processing", "message": "Training BERTopic", "data": {"job_id": "uuid", "progress": 50}}
+{"status": "done", "message": "Training selesai", "data": {"job_id": "uuid", "progress": 100}}
+{"status": "error", "message": "Pesan error", "data": {"job_id": "uuid"}}
+```
+
+## Progress Stages
+
+- `5` validating upload
+- `10` parsing
+- `20` preprocessing
+- `30` loading model MinIO
+- `50` training
+- `70` updating/finalizing
+- `85` saving model
+- `100` done

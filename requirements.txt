@@ -1,14 +1,13 @@
 # Web Framework
 fastapi==0.115.0
 uvicorn[standard]==0.30.6
+python-multipart==0.0.12
 
-# Background Job (ARQ + Redis)
-arq==0.26.1
+# Object Storage
+minio==7.2.15
+
+# Progress State
 redis==5.0.8
-
-# Database (PostgreSQL)
-sqlalchemy==2.0.36
-asyncpg==0.30.0          # async driver PostgreSQL untuk SQLAlchemy
 
 # Validation & Settings
 pydantic==2.9.2
@@ -19,14 +18,7 @@ bertopic==0.16.4
 sentence-transformers==3.2.1   # IndoBERTweet embeddings
 scikit-learn==1.5.2            # BIRCH clustering
 umap-learn==0.5.7
-rank-bm25==0.2.2               # BM25 representation
-
-# Utilitas
-python-multipart==0.0.12   # upload file
-httpx==0.27.2              # async HTTP client (opsional)
-slowapi==0.1.9            # rate limiting (opsional)
 
 # Praprosesing teks
-Sastrawi==1.0.1
 emoji==2.15.0
 indoNLP==0.3.4

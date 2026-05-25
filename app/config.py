@@ -14,9 +14,14 @@ class Settings(BaseSettings):
     PORT: int = 8000
 
     # --- Infrastructure ---
-    DATABASE_URL: str        # wajib ada di .env, tidak ada default
-    REDIS_URL: str
-    MODEL_DIR: str
+    MINIO_ENDPOINT: str = "localhost:9000"
+    MINIO_ACCESS_KEY: str = "minioadmin"
+    MINIO_SECRET_KEY: str = "minioadmin"
+    MINIO_BUCKET: str = "bertopic"
+    MINIO_MODEL_PATH: str = "model/chat_model"
+    MINIO_SECURE: bool = False
+    REDIS_URL: str = "redis://localhost:6379/0"
+    PROGRESS_TTL_SECONDS: int = 60 * 60 * 24
 
     # --- File Upload (in-memory) ---
     MAX_FILE_SIZE_MB: int = 10  # Batas raw file yang diterima (10 MB)
@@ -42,6 +47,7 @@ class Settings(BaseSettings):
     model_config = {
         "env_file": ".env",
         "case_sensitive": True,
+        "extra": "ignore",
     }
 
 

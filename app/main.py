@@ -4,63 +4,19 @@ FastAPI Application Entry Point
 Inisialisasi dan konfigurasi utama FastAPI app.
 """
 
-from contextlib import asynccontextmanager
-from collections.abc import AsyncGenerator
-import os
+import logging
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.errors import RateLimitExceeded
-from slowapi.util import get_remote_address
-from sqlalchemy import text
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 
-from app.cache import get_redis_pool
 from app.config import settings
-from app.database import engine, init_db
-from app.models import Base
-from app.routes import jobs, topics
+from app.api.routes import topics, ws_progress
+from app.schemas import BaseResponse
 
 
-async def reset_database() -> None:
-    """Drop semua tabel lalu create ulang (DEV ONLY)."""
-    async with engine.begin() as conn:
-        await conn.execute(text("DROP SCHEMA public CASCADE"))
-        await conn.execute(text("CREATE SCHEMA public"))
-        await conn.run_sync(Base.metadata.create_all)
-
-
-async def reset_redis() -> None:
-    """Flush Redis termasuk queue ARQ (DEV ONLY)."""
-    pool = await get_redis_pool()
-
-    try:
-        await pool.flushdb()
-    finally:
-        await pool.aclose()
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """Lifespan: startup & shutdown hooks."""
-
-    reset_enabled = os.getenv("RESET_DEV", "false").lower() == "true"
-
-    if reset_enabled:
-        print("🧹 RESET_DEV=true → resetting database & redis...")
-
-        await reset_database()
-        await reset_redis()
-
-        print("✅ Development environment reset complete")
-    else:
-        await init_db()
-
-    print(f"🚀 {settings.APP_NAME} v{settings.APP_VERSION} is running!")
-
-    yield
-
-    print("👋 Application shutting down...")
+logger = logging.getLogger(__name__)
 
 
 def create_app() -> FastAPI:
@@ -69,19 +25,14 @@ def create_app() -> FastAPI:
         title=settings.APP_NAME,
         description=settings.APP_DESCRIPTION,
         version=settings.APP_VERSION,
-        lifespan=lifespan,
         docs_url="/docs",
         redoc_url="/redoc",
         openapi_url="/openapi.json",
     )
 
-    # --- Rate Limiting ---
-    limiter = Limiter(key_func=get_remote_address)
-    app.state.limiter = limiter
-    app.add_exception_handler(
-        RateLimitExceeded,
-        _rate_limit_exceeded_handler,  # type: ignore[arg-type]
-    )
+    app.add_exception_handler(HTTPException, _http_exception_handler)
+    app.add_exception_handler(RequestValidationError, _validation_exception_handler)
+    app.add_exception_handler(Exception, _unhandled_exception_handler)
 
     # --- Middleware ---
     app.add_middleware(
@@ -93,20 +44,47 @@ def create_app() -> FastAPI:
     )
 
     # --- Routes ---
-    app.include_router(jobs.router)
     app.include_router(topics.router)
+    app.include_router(ws_progress.router)
 
     # --- Health Check ---
-    @app.get("/", tags=["Health Check"])
-    def health_check() -> dict:
+    @app.get("/", tags=["Health Check"], response_model=BaseResponse[dict], response_model_exclude_none=True)
+    def health_check() -> BaseResponse[dict]:
         """Root endpoint — cek apakah server berjalan."""
-        return {
-            "status": "healthy",
-            "app": settings.APP_NAME,
-            "version": settings.APP_VERSION,
-        }
+        return BaseResponse(
+            status="success",
+            message="Server berjalan normal",
+            data={
+                "status": "healthy",
+                "app": settings.APP_NAME,
+                "version": settings.APP_VERSION,
+            },
+        )
 
     return app
+
+
+async def _http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=BaseResponse(status="error", message=str(exc.detail)).model_dump(exclude_none=True),
+    )
+
+
+async def _validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+    message = exc.errors()[0]["msg"] if exc.errors() else "Request tidak valid"
+    return JSONResponse(
+        status_code=422,
+        content=BaseResponse(status="error", message=message).model_dump(exclude_none=True),
+    )
+
+
+async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    logger.exception("Unhandled error on %s %s", request.method, request.url.path, exc_info=exc)
+    return JSONResponse(
+        status_code=500,
+        content=BaseResponse(status="error", message="Terjadi kesalahan pada server").model_dump(exclude_none=True),
+    )
 
 
 # Instance yang dijalankan oleh uvicorn
