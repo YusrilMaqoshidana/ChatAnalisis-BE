@@ -12,7 +12,7 @@ from app.utils import apply_full_preprocessing, filter_messages_by_timeframe, pa
 
 _ALLOWED_EXTENSIONS: frozenset[str] = frozenset({".txt", ".zip"})
 _SKIP_ZIP_SUFFIXES: tuple[str, ...] = (".vcf",)
-_ALLOWED_TIMEFRAMES: frozenset[str] = frozenset({"week", "month", "year"})
+_ALLOWED_TIMEFRAMES: frozenset[str] = frozenset({"all", "week", "month", "year"})
 
 
 def validate_upload_meta(filename: str, timeframe: str) -> tuple[str, str]:
@@ -28,7 +28,7 @@ def validate_upload_meta(filename: str, timeframe: str) -> tuple[str, str]:
         raise ValueError("Format file tidak didukung. Gunakan .txt atau .zip.")
 
     if normalized_timeframe and normalized_timeframe not in _ALLOWED_TIMEFRAMES:
-        raise ValueError("timeframe tidak valid. Gunakan: week, month, atau year.")
+        raise ValueError("timeframe tidak valid. Gunakan: all, week, month, atau year.")
 
     return normalized_filename, normalized_timeframe or "all"
 
