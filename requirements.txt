@@ -13,12 +13,6 @@ redis==5.0.8
 pydantic==2.9.2
 pydantic-settings==2.6.0  # baca .env
 
-# NLP Pipeline
-bertopic==0.16.4
-sentence-transformers==3.2.1   # IndoBERTweet embeddings
-scikit-learn==1.5.2            # BIRCH clustering
-umap-learn==0.5.7
-
-# Praprosesing teks
-emoji==2.15.0
-indoNLP==0.3.4
+# Data Manipulation & Text Processing
+pandas
+emoji

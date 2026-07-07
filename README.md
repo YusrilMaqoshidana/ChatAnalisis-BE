@@ -1,83 +1,39 @@
-# ChatAnalisis API
+# ChatAnalisis API (KISS Version)
 
-FastAPI backend untuk analisis chat WhatsApp menggunakan BERTopic, MinIO, Redis, dan background processing.
+FastAPI backend untuk analisis dan pemrosesan chat WhatsApp sederhana.
 
-## Arsitektur Saat Ini
+## Fitur Utama
 
-- `POST /topics/train` menerima upload file lalu memulai background task.
-- Progress job disimpan di Redis (TTL 24 jam).
-- BERTopic model dimuat/disimpan ke MinIO.
-- Jika model belum ada: `fit_transform()`.
-- Jika model sudah ada: `partial_fit()`.
-- Progress bisa dipantau via REST polling atau WebSocket progress stream.
+- Endpoint tunggal `/analysis` untuk parsing, filter tanggal, dan penambahan indeks.
+- Penyimpanan otomatis ke MinIO dengan nama `{session_id}.csv`.
+- Konfigurasi Lifecycle MinIO untuk auto-delete file secara otomatis setelah 1 hari.
+- Struktur sangat sederhana, ringan, dan cepat (tanpa background tasks / Redis / heavy ML).
 
 ## Quick Start
 
+### 1. Prasyarat
+- Python 3.11+
+- MinIO Server (berjalan di localhost:9000 atau dikonfigurasi melalui `.env`)
+
+### 2. Jalankan Lokal
+
 ```bash
-cd /home/usereal/Projects/Python/ChatAnalisis-BE
-python -m venv .venv
-source .venv/bin/activate
+# Buat virtual environment
+python3 -m venv venv
+source venv/bin/activate
+
+# Install dependensi
 pip install -r requirements.txt
+
+# Salin env file
 cp .env.example .env
+
+# Jalankan server
 uvicorn app.main:app --reload
 ```
 
-## Endpoint (Recommended)
+Server akan berjalan secara default di `http://0.0.0.0:8000`.
 
-- Health check: `GET /`
-- Start training job: `POST /topics/train`
-- Poll progress: `GET /topics/progress/{job_id}`
-- Stream progress: `ws://localhost:8000/topics/ws/{job_id}`
+## Dokumentasi API
 
-## Request `POST /topics/train`
-
-`multipart/form-data` fields:
-
-- `file`: `.txt` atau `.zip`
-- `timeframe`: `week | month | year` (kosong = train semua data)
-
-Response:
-
-```json
-{
-  "status": "success",
-  "message": "Training started",
-  "data": {
-    "job_id": "uuid"
-  }
-}
-```
-
-## Response `GET /topics/progress/{job_id}`
-
-```json
-{
-  "status": "success",
-  "message": "Job progress",
-  "data": {
-    "job_id": "uuid",
-    "status": "processing",
-    "progress": 70,
-    "message": "Updating BERTopic model"
-  }
-}
-```
-
-## WebSocket Progress Message `topics/ws/{job_id}`
-
-```json
-{"status": "processing", "message": "Training BERTopic", "data": {"job_id": "uuid", "progress": 50}}
-{"status": "done", "message": "Training selesai", "data": {"job_id": "uuid", "progress": 100}}
-{"status": "error", "message": "Pesan error", "data": {"job_id": "uuid"}}
-```
-
-## Progress Stages
-
-- `5` validating upload
-- `10` parsing
-- `20` preprocessing
-- `30` loading model MinIO
-- `50` training
-- `70` updating/finalizing
-- `85` saving model
-- `100` done
+Lihat [API.md](docs/API.md) untuk detail endpoint `/analysis` dan `/`.

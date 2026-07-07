@@ -12,7 +12,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from app.config import settings
-from app.api.routes import topics, ws_progress
+from app.api.routes import analysis
 from app.schemas import BaseResponse
 
 
@@ -44,8 +44,7 @@ def create_app() -> FastAPI:
     )
 
     # --- Routes ---
-    app.include_router(topics.router)
-    app.include_router(ws_progress.router)
+    app.include_router(analysis.router)
 
     # --- Health Check ---
     @app.get("/", tags=["Health Check"], response_model=BaseResponse[dict], response_model_exclude_none=True)

@@ -1,6 +1,5 @@
 from pydantic_settings import BaseSettings
 
-
 class Settings(BaseSettings):
     """Application settings."""
 
@@ -18,38 +17,18 @@ class Settings(BaseSettings):
     MINIO_ACCESS_KEY: str = "minioadmin"
     MINIO_SECRET_KEY: str = "minioadmin"
     MINIO_BUCKET: str = "bertopic"
-    MINIO_MODEL_PATH: str = "model/chat_model"
     MINIO_SECURE: bool = False
     REDIS_URL: str = "redis://localhost:6379/0"
-    PROGRESS_TTL_SECONDS: int = 60 * 60 * 24
-
-    # --- File Upload (in-memory) ---
-    MAX_FILE_SIZE_MB: int = 10  # Batas raw file yang diterima (10 MB)
-
-    # --- Rate Limiting ---
-    RATE_LIMIT_UPLOAD: str = "5/minute"  # Max upload per IP per menit
-
-    # --- Zip Bomb Protection ---
-    # Estimasi: grup aktif ~300 pesan/hari × 200 karakter × 1095 hari ≈ 65 MB, buffer 3× = 200 MB
-    ZIP_MAX_EXTRACTED_MB: int = 200
-
-    # --- Processing Timeout ---
-    UPLOAD_TIMEOUT_SECONDS: int = 30
+    PROGRESS_TTL_SECONDS: int = 86400
 
     # --- CORS ---
     CORS_ORIGINS: list[str] = ["*"]
-
-    @property
-    def max_file_size_bytes(self) -> int:
-        """Konversi MB ke bytes."""
-        return self.MAX_FILE_SIZE_MB * 1024 * 1024
 
     model_config = {
         "env_file": ".env",
         "case_sensitive": True,
         "extra": "ignore",
     }
-
 
 # Singleton instance
 settings = Settings()

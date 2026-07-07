@@ -1,0 +1,13 @@
+.venv*/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.git/
+.gitignore
+.python-version
+docker_documentation.md
+Dockerfile
+*.db
+*.csv
