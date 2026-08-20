@@ -1,25 +1,10 @@
-"""
-Utility module for generating daily message activity data (Daily Graph).
-Designed for line charts where the X-axis is the date (YYYY-MM-DD) and the Y-axis is the message count.
-"""
-
 import io
 import logging
 import pandas as pd
-from minio import Minio
 
-from app.config import settings
+from app.infrastructure.storage import read_file
 
 logger = logging.getLogger(__name__)
-
-def _get_minio_client() -> Minio:
-    """Initialize MinIO client with configuration from settings."""
-    return Minio(
-        settings.MINIO_ENDPOINT,
-        access_key=settings.MINIO_ACCESS_KEY,
-        secret_key=settings.MINIO_SECRET_KEY,
-        secure=settings.MINIO_SECURE,
-    )
 
 def calculate_daily_graph_pandas(df: pd.DataFrame, fill_missing: bool = True) -> list[dict]:
     """
@@ -76,7 +61,7 @@ def calculate_daily_graph_pandas(df: pd.DataFrame, fill_missing: bool = True) ->
 
 def get_daily_graph(session_id: str, fill_missing: bool = True) -> list[dict]:
     """
-    Retrieve daily message counts for a session by downloading its preprocessed file from MinIO.
+    Retrieve daily message counts for a session by downloading its preprocessed file from local storage.
     
     Args:
         session_id: The session ID corresponding to the chat upload.
@@ -86,22 +71,13 @@ def get_daily_graph(session_id: str, fill_missing: bool = True) -> list[dict]:
         A list of dictionaries with 'date' and 'count' fields sorted chronologically.
     """
     try:
-        client = _get_minio_client()
-        bucket_name = settings.MINIO_BUCKET
-        object_name = f"post_processing_{session_id}.csv"
-        
-        # Download preprocessed file from MinIO
-        response = client.get_object(bucket_name, object_name)
-        try:
-            csv_bytes = response.read()
-            df = pd.read_csv(io.BytesIO(csv_bytes), dtype=str)
-        finally:
-            response.close()
-            response.release_conn()
+        object_name = f"{session_id}_labeled.csv"
+        csv_bytes = read_file(object_name)
+        df = pd.read_csv(io.BytesIO(csv_bytes), dtype=str)
             
         # Calculate daily counts
         return calculate_daily_graph_pandas(df, fill_missing=fill_missing)
         
     except Exception as exc:
-        logger.error(f"Failed to fetch daily graph data from MinIO: {exc}")
+        logger.error(f"Failed to fetch daily graph data from Local Storage: {exc}")
         return []

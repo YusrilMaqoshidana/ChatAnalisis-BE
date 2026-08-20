@@ -1,72 +1,43 @@
-"""REST endpoint for simple chat analysis."""
-
 from __future__ import annotations
 
-import csv
 import io
-from datetime import datetime
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
-from minio import Minio
-from minio.lifecycleconfig import LifecycleConfig, Rule, Expiration
-from minio.commonconfig import Filter
+import json
+import logging
+import pandas as pd
+from typing import Dict, List
 
-from app.config import settings
-from app.schemas import BaseResponse
+from fastapi import (
+    APIRouter, 
+    File, 
+    Form, 
+    HTTPException, 
+    UploadFile, 
+    status, 
+    BackgroundTasks
+)
+from fastapi.responses import StreamingResponse
+import asyncio
+
+from app.infrastructure.sse import progress_history, sse_manager
+from app.services import analysis_service
+from app.schemas import (
+    BaseResponse,
+    ResultsSummaryDTO,
+    TopicDetailDTO,
+    MessageContextDTO
+)
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Analysis"])
 
-def _minio_client() -> Minio:
-    """Create configured MinIO client."""
-    return Minio(
-        settings.MINIO_ENDPOINT,
-        access_key=settings.MINIO_ACCESS_KEY,
-        secret_key=settings.MINIO_SECRET_KEY,
-        secure=settings.MINIO_SECURE,
-    )
-
-def _ensure_bucket_with_lifecycle(client: Minio, bucket_name: str) -> None:
-    """Ensure bucket exists and has lifecycle policy for auto delete (1 day)."""
-    if not client.bucket_exists(bucket_name):
-        client.make_bucket(bucket_name)
-    
-    # Configure lifecycle for auto-delete after 1 day
-    try:
-        rule = Rule(
-            rule_id="auto-delete-rule",
-            status="Enabled",
-            expiration=Expiration(days=1),
-            rule_filter=Filter(prefix="")
+def validate_session_id(session_id: str) -> None:
+    import re
+    if not session_id or not re.match(r"^[a-zA-Z0-9_-]+$", session_id):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="ID Sesi tidak valid (hanya alfanumerik, dash, dan underscore yang diperbolehkan)."
         )
-        config = LifecycleConfig([rule])
-        client.set_bucket_lifecycle(bucket_name, config)
-    except Exception as e:
-        # Don't fail the request if lifecycle policy can't be set (e.g. MinIO mock/offline policy limits)
-        print(f"Warning: Failed to set bucket lifecycle: {e}")
-
-def parse_date(date_str: str) -> datetime | None:
-    """Parse date string into datetime object with multiple format support."""
-    if not date_str:
-        return None
-    date_str = date_str.strip()
-    for fmt in (
-        "%Y-%m-%d %H:%M:%S", 
-        "%Y-%m-%d %H:%M", 
-        "%Y-%m-%d", 
-        "%d/%m/%Y %H:%M:%S", 
-        "%d/%m/%Y %H:%M", 
-        "%d/%m/%Y",
-        "%d/%m/%y %I.%M %p",
-        "%d/%m/%y %H.%M",
-        "%d/%m/%y %H:%M"
-    ):
-        try:
-            return datetime.strptime(date_str, fmt)
-        except ValueError:
-            continue
-    try:
-        return datetime.fromisoformat(date_str)
-    except ValueError:
-        return None
 
 @router.post(
     "/analysis",
@@ -75,19 +46,22 @@ def parse_date(date_str: str) -> datetime | None:
     status_code=status.HTTP_200_OK,
 )
 async def analyze_chat(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     session_id: str = Form(...),
     startDate: str = Form(None),
     endDate: str = Form(None),
 ) -> BaseResponse[dict]:
     """
-    Process Chat CSV file:
+    Process Chat CSV file in background:
     - Slice by startDate and endDate.
-    - Keep only index, timestamp, pengirim, pesan columns.
-    - Save to MinIO as '{session_id}.csv' (original context)
-    - Run WhatsApp message pre-processing steps.
-    - Save pre-processed files as 'post_processing_{session_id}.csv' and 'post_preprocessing_{session_id}.csv'.
+    - Save slice to local storage.
+    - Run the pre-processing and BERTopic pipeline asynchronously.
+    - Returns immediately to prevent HTTP timeouts.
     """
+    # Validate session_id to prevent path traversal
+    validate_session_id(session_id)
+
     # 1. Validate file extension
     filename = file.filename or ""
     if not filename.lower().endswith(".csv"):
@@ -113,9 +87,6 @@ async def analyze_chat(
 
     # 3. Parse CSV and filter by date using Pandas
     try:
-        import pandas as pd
-        from app.utils.preprocessing import preprocess_dataframe
-
         content_str = content_bytes.decode("utf-8", errors="ignore")
         df_raw = pd.read_csv(io.StringIO(content_str), dtype=str)
         
@@ -125,10 +96,8 @@ async def analyze_chat(
                 detail="CSV tidak valid atau kosong."
             )
         
-        # Clean column names
         df_raw.columns = [c.strip() for c in df_raw.columns]
         
-        # Mapping headers
         ts_candidates = ["timestamp", "tanggal", "datetime", "date", "created_at"]
         sender_candidates = ["pengirim", "sender", "author", "name", "username"]
         msg_candidates = ["pesan", "message", "text", "content", "body"]
@@ -146,7 +115,6 @@ async def analyze_chat(
             if not msg_col and any(cand in col_lower for cand in msg_candidates):
                 msg_col = col
                 
-        # Fallback to column order if not matched
         if not ts_col and len(df_raw.columns) > 0:
             ts_col = df_raw.columns[0]
         if not sender_col and len(df_raw.columns) > 1:
@@ -154,17 +122,15 @@ async def analyze_chat(
         if not msg_col and len(df_raw.columns) > 2:
             msg_col = df_raw.columns[2]
 
-        # Extract mapped columns
         df = pd.DataFrame()
         df["timestamp"] = df_raw[ts_col] if ts_col else ""
         df["pengirim"] = df_raw[sender_col] if sender_col else ""
         df["pesan"] = df_raw[msg_col] if msg_col else ""
         
-        # Date parsing and filtering
-        parsed_dates = df["timestamp"].apply(parse_date)
+        parsed_dates = df["timestamp"].apply(analysis_service.parse_date)
         
-        start_dt = parse_date(startDate) if startDate else None
-        end_dt = parse_date(endDate) if endDate else None
+        start_dt = analysis_service.parse_date(startDate) if startDate else None
+        end_dt = analysis_service.parse_date(endDate) if endDate else None
         if end_dt and len(endDate.strip()) <= 10:
             end_dt = end_dt.replace(hour=23, minute=59, second=59, microsecond=999999)
 
@@ -178,13 +144,10 @@ async def analyze_chat(
                 mask_date = mask_date & (parsed_dates <= end_dt)
                 
         df = df[mask_date].copy()
-        
-        # Standardize timestamp string
         df["timestamp"] = parsed_dates[mask_date].apply(
             lambda dt: dt.isoformat(sep=" ", timespec="seconds") if pd.notna(dt) else ""
         )
         
-        # Add index
         df = df.reset_index(drop=True)
         df["index"] = df.index
         df = df[["index", "timestamp", "pengirim", "pesan"]]
@@ -197,75 +160,136 @@ async def analyze_chat(
             detail=f"Gagal memproses CSV: {str(exc)}"
         )
 
-    # 4. Generate CSV for original context
     original_csv_str = df.to_csv(index=False)
     original_csv_bytes = original_csv_str.encode("utf-8")
 
-    # 5. Run preprocessing pipeline
-    try:
-        df_preprocessed = preprocess_dataframe(df)
-        cols_to_save = ["index", "timestamp", "pengirim", "pesan", "Pesan_Preprocessed"]
-        # Ensure we only export columns that exist
-        cols_to_save = [c for c in cols_to_save if c in df_preprocessed.columns]
-        preprocessed_csv_str = df_preprocessed[cols_to_save].to_csv(index=False)
-        preprocessed_csv_bytes = preprocessed_csv_str.encode("utf-8")
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Gagal menjalankan preprocessing: {str(exc)}"
-        )
+    # Initialize progress history for this session
+    progress_history[session_id] = [
+        {"step_id": 1, "status": "completed", "time_elapsed": "10ms"},
+        {"step_id": 2, "status": "running"}
+    ]
 
-    # 6. Save/Upload all files to MinIO
-    try:
-        client = _minio_client()
-        bucket_name = settings.MINIO_BUCKET
-        _ensure_bucket_with_lifecycle(client, bucket_name)
-        
-        # Original context file
-        orig_object_name = f"{session_id}.csv"
-        client.put_object(
-            bucket_name=bucket_name,
-            object_name=orig_object_name,
-            data=io.BytesIO(original_csv_bytes),
-            length=len(original_csv_bytes),
-            content_type="text/csv",
-        )
-        
-        # Preprocessed files (uploaded as post_processing_{session_id}.csv and post_preprocessing_{session_id}.csv)
-        post_proc_object_name = f"post_processing_{session_id}.csv"
-        client.put_object(
-            bucket_name=bucket_name,
-            object_name=post_proc_object_name,
-            data=io.BytesIO(preprocessed_csv_bytes),
-            length=len(preprocessed_csv_bytes),
-            content_type="text/csv",
-        )
-        
-        post_preproc_object_name = f"post_preprocessing_{session_id}.csv"
-        client.put_object(
-            bucket_name=bucket_name,
-            object_name=post_preproc_object_name,
-            data=io.BytesIO(preprocessed_csv_bytes),
-            length=len(preprocessed_csv_bytes),
-            content_type="text/csv",
-        )
-        
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Gagal mengunggah ke MinIO: {str(exc)}"
-        )
+    # Add task to background executor
+    from app.infrastructure.storage import cleanup_old_files
+    background_tasks.add_task(cleanup_old_files)
+    background_tasks.add_task(
+        analysis_service.run_analysis_pipeline_task,
+        session_id,
+        df,
+        original_csv_bytes
+    )
 
     return BaseResponse(
         status="success",
-        message="Analisis dan pre-processing selesai, disimpan di MinIO",
+        message="Analisis obrolan berhasil dieksekusi dan disimpan.",
         data={
             "session_id": session_id,
-            "original_filename": orig_object_name,
-            "preprocessed_filename": post_proc_object_name,
-            "bucket": bucket_name,
+            "original_filename": f"{session_id}.csv",
+            "bucket": "local",
             "original_row_count": len(df),
-            "preprocessed_row_count": len(df_preprocessed),
         }
     )
 
+@router.get("/api/analysis/events/{session_id}")
+async def sse_endpoint(session_id: str):
+    """Server-Sent Events endpoint to subscribe to real-time analysis progress logs."""
+    validate_session_id(session_id)
+    queue = sse_manager.get_queue(session_id)
+    
+    async def event_generator():
+        try:
+            # 1. Send all past progress first (if any)
+            if session_id in progress_history:
+                for event in progress_history[session_id]:
+                    yield f"data: {json.dumps(event)}\n\n"
+                    # If already completed or failed, close the stream
+                    if event.get("done") or event.get("status") == "failed":
+                        return
+            
+            # 2. Wait for new events from the background task
+            while True:
+                message = await queue.get()
+                yield f"data: {json.dumps(message)}\n\n"
+                
+                # If the pipeline is done or failed, close the connection
+                if message.get("done") or message.get("status") == "failed":
+                    break
+        except asyncio.CancelledError:
+            # Client disconnected
+            pass
+        finally:
+            sse_manager.remove_queue(session_id, queue)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
+
+@router.get(
+    "/api/results/{jobId}",
+    response_model=BaseResponse[ResultsSummaryDTO],
+    response_model_exclude_none=True,
+    status_code=status.HTTP_200_OK,
+)
+def get_results_summary(jobId: str) -> BaseResponse[ResultsSummaryDTO]:
+    """Retrieve summarized topic modeling results for the session/job."""
+    validate_session_id(jobId)
+    summary = analysis_service.get_results_summary(jobId)
+    return BaseResponse(
+        status="success",
+        message="Ringkasan hasil analisis berhasil diambil.",
+        data=summary
+    )
+
+@router.delete(
+    "/api/results/{jobId}",
+    response_model=BaseResponse[dict],
+    response_model_exclude_none=True,
+    status_code=status.HTTP_200_OK,
+)
+def delete_results(jobId: str) -> BaseResponse[dict]:
+    """Delete all objects stored in local storage associated with the given jobId/session_id."""
+    validate_session_id(jobId)
+    data = analysis_service.delete_results(jobId)
+    return BaseResponse(
+        status="success",
+        message="Hasil analisis berhasil dihapus dari storage.",
+        data=data
+    )
+
+@router.get(
+    "/api/results/{jobId}/topics/{topicId}",
+    response_model=BaseResponse[TopicDetailDTO],
+    response_model_exclude_none=True,
+    status_code=status.HTTP_200_OK,
+)
+def get_topic_detail(jobId: str, topicId: int) -> BaseResponse[TopicDetailDTO]:
+    """Retrieve detailed messages belonging to a specific topic cluster."""
+    validate_session_id(jobId)
+    detail = analysis_service.get_topic_detail(jobId, topicId)
+    return BaseResponse(
+        status="success",
+        message=f"Detail klaster topik {topicId} berhasil diambil.",
+        data=detail
+    )
+
+@router.get(
+    "/api/results/{jobId}/messages/{messageId}/context",
+    response_model=BaseResponse[MessageContextDTO],
+    response_model_exclude_none=True,
+    status_code=status.HTTP_200_OK,
+)
+def get_message_context(jobId: str, messageId: str) -> BaseResponse[MessageContextDTO]:
+    """Retrieve chronological context (timeline) around a specific message."""
+    validate_session_id(jobId)
+    context = analysis_service.get_message_context(jobId, messageId)
+    return BaseResponse(
+        status="success",
+        message="Konteks percakapan berhasil diambil.",
+        data=context
+    )

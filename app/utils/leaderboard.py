@@ -1,15 +1,10 @@
-"""
-Utility module for generating a leaderboard of active senders.
-Provides both direct Pandas/in-memory processing and a high-performance Redis Sorted Set implementation.
-"""
-
 import io
 import logging
 import redis
 import pandas as pd
-from minio import Minio
 
 from app.config import settings
+from app.infrastructure.storage import read_file
 
 logger = logging.getLogger(__name__)
 
@@ -22,15 +17,6 @@ def _get_redis_client() -> redis.Redis | None:
     except Exception as exc:
         logger.warning(f"Failed to connect to Redis: {exc}")
         return None
-
-def _get_minio_client() -> Minio:
-    """Initialize MinIO client with configuration from settings."""
-    return Minio(
-        settings.MINIO_ENDPOINT,
-        access_key=settings.MINIO_ACCESS_KEY,
-        secret_key=settings.MINIO_SECRET_KEY,
-        secure=settings.MINIO_SECURE,
-    )
 
 def calculate_leaderboard_pandas(df: pd.DataFrame, limit: int = 10) -> list[dict]:
     """
@@ -114,7 +100,7 @@ def get_leaderboard(session_id: str, limit: int = 10) -> list[dict]:
     This function implements a read-through cache mechanism:
     1. Attempts to retrieve leaderboard from Redis (fast).
     2. If Redis is unavailable or the key does not exist, it downloads the preprocessed 
-       CSV file (post_processing_{session_id}.csv) from MinIO, recalculates the leaderboard,
+       CSV file ({session_id}_labeled.csv) from local storage, recalculates the leaderboard,
        saves it to Redis for subsequent calls, and returns it.
        
     Args:
@@ -145,20 +131,11 @@ def get_leaderboard(session_id: str, limit: int = 10) -> list[dict]:
         except Exception as exc:
             logger.warning(f"Error reading leaderboard from Redis, falling back: {exc}")
 
-    # 2. Cache miss or Redis offline: Read from MinIO
+    # 2. Cache miss or Redis offline: Read from Local Storage
     try:
-        client = _get_minio_client()
-        bucket_name = settings.MINIO_BUCKET
-        object_name = f"post_processing_{session_id}.csv"
-        
-        # Download file from MinIO
-        response = client.get_object(bucket_name, object_name)
-        try:
-            csv_bytes = response.read()
-            df = pd.read_csv(io.BytesIO(csv_bytes), dtype=str)
-        finally:
-            response.close()
-            response.release_conn()
+        object_name = f"{session_id}_labeled.csv"
+        csv_bytes = read_file(object_name)
+        df = pd.read_csv(io.BytesIO(csv_bytes), dtype=str)
             
         # Recalculate
         leaderboard = calculate_leaderboard_pandas(df, limit=limit)
@@ -170,5 +147,5 @@ def get_leaderboard(session_id: str, limit: int = 10) -> list[dict]:
         return leaderboard
         
     except Exception as exc:
-        logger.error(f"Failed to fetch leaderboard from MinIO/Pandas fallback: {exc}")
+        logger.error(f"Failed to fetch leaderboard from Local Storage/Pandas fallback: {exc}")
         return []

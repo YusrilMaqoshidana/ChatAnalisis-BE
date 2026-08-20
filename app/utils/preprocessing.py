@@ -1,108 +1,182 @@
 """
-Utility module for WhatsApp message pre-processing.
+Utility module for WhatsApp message pre-processing based on b_preprocessing_web.ipynb.
+Separates cleaning paths for IndoBERTweet Embedding (retains context) and c-TF-IDF / BM25 (highly normalized).
 """
 
 import re
 import emoji
+import hashlib
+import unicodedata
 import pandas as pd
+from Sastrawi.StopWordRemover.StopWordRemoverFactory import StopWordRemoverFactory
 
-_URL_RE = re.compile(r"https?://\S+|www\.\S+")
-_MENTION_RE = re.compile(
-    r"(?<!\S)"          # tidak didahului non-spasi
-    r"@"                # awalan @
-    r"(?:\+?\d+)"       # kode negara: +62 atau 62
-    r"(?:[\s\-]\d+)*"   # sisa nomor: bisa dipisah spasi atau strip
-    r"|(?<!\S)@\S+"     # fallback: @username biasa tanpa spasi
-)
-_ELONGATION_RE = re.compile(r'(\w+?)\1{2,}')
-_MULTISPACE_RE = re.compile(r"\s+")
+# Initialize Sastrawi Stopword List
+factory = StopWordRemoverFactory()
+sastrawi_stopwords = set(factory.get_stop_words())
 
-def remove_url(text: str) -> str:
-    """Hapus URL dari pesan"""
-    if pd.isna(text):
-        return ""
-    text = str(text)
-    text = _URL_RE.sub("", text)
-    text = re.sub(r" +", " ", text)
-    return text.strip()
+specific_words = {"user", "amp", "wa", "whatsapp", "chat", "chatnya", "grup", "group"}
+all_stopwords = sastrawi_stopwords.union(specific_words)
 
-def replace_mention(text: str) -> str:
-    """Normalisasi mention menjadi @USER"""
-    if pd.isna(text):
-        return ""
-    return _MENTION_RE.sub("@USER", str(text)).strip()
+# Slang normalization dictionary
+normalization_dict = {
+    "yg": "yang", "ga": "tidak", "gak": "tidak", "nggak": "tidak", "gk": "tidak",
+    "aja": "saja", "deh": "saja", "sih": "saja", "dong": "saja", "kok": "saja",
+    "iya": "ya", "jg": "juga", "loh": "saja", "ya": "ya", "yah": "ya", "y": "ya",
+    "ok": "oke", "oke": "oke", "okay": "oke", "sip": "oke", "siap": "oke",
+    "nah": "nah", "nih": "ini", "tuh": "itu", "kan": "kan", "mah": "saja",
+    "lah": "saja", "eh": "eh", "wkwk": "tertawa", "wk": "tertawa", "haha": "tertawa",
+    "hehe": "tertawa", "hihi": "tertawa", "lol": "tertawa", "lmao": "tertawa",
+    "thanks": "terima kasih", "thx": "terima kasih", "makasih": "terima kasih", "mksh": "terima kasih"
+}
 
-def remove_emoji(text: str) -> str:
+def clean_system_notifications(text: str) -> str:
+    """Remove system notifications / deleted messages / omitted media."""
+    system_patterns = [
+        r"this message was deleted",
+        r"you deleted this message",
+        r"pesan ini telah dihapus",
+        r"anda telah menghapus pesan ini",
+        r"anda menghapus pesan ini",
+        r"pesan ini dihapus oleh admin",
+        r"pesan ini dihapus",
+        r"missed voice call",
+        r"missed video call",
+        r"panggilan suara tak terjawab",
+        r"panggilan video tak terjawab",
+        r"panggilan suara",
+        r"panggilan video",
+        r"panggilan tak terjawab",
+        r"missed call",
+        r"media omitted",
+        r"media tidak disertakan",
+        r"image omitted",
+        r"gambar tidak disertakan",
+        r"video omitted",
+        r"video tidak disertakan",
+        r"sticker omitted",
+        r"stiker tidak disertakan",
+        r"audio omitted",
+        r"audio tidak disertakan",
+        r"gif omitted",
+        r"gif tidak disertakan",
+        r"document omitted",
+        r"dokumen tidak disertakan",
+        r"contact omitted",
+        r"kontak tidak disertakan",
+        r"location omitted",
+        r"lokasi tidak disertakan",
+        r"poll omitted",
+        r"jajak pendapat tidak disertakan"
+    ]
+    for pattern in system_patterns:
+        text = re.sub(pattern, "", text, flags=re.IGNORECASE)
+    return text
+
+def normalize_repeated_chars(text: str) -> str:
+    """Reduce 3 or more consecutive identical characters to 2.
+    E.g., 'bangeeeet' -> 'bangeet'"""
+    return re.sub(r"(.)\1{2,}", r"\1\1", text)
+
+def anonymize_sensitive_data(text: str) -> str:
+    """Anonymize emails and phone numbers in the text body."""
+    if not isinstance(text, str):
+        return text
+    # Mask email addresses
+    email_pattern = r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b"
+    text = re.sub(email_pattern, "", text)
+
+    # Mask general phone numbers (not starting with @ to avoid double-masking mentions)
+    phone_pattern = r"(?<!@)\b\+?\d{1,3}[-.\s]?\(?\d{1,3}\)?[-.\s]?\d{3,4}[-.\s]?\d{3,4}\b"
+    text = re.sub(phone_pattern, "@USER", text)
+    return text
+
+def clean_for_embedding(text: str) -> str:
     """
-    Hapus semua emoji dari teks, termasuk emoji multi-codepoint.
-    Gunakan library emoji untuk mendeteksi dan mengganti dengan string kosong.
+    Preprocess text for IndoBERTweet Embedding:
+    - Retains context, punctuation, stopwords (No ❌).
+    - Cleans URLs, system notifications, lowercase, demojizes emojis, slang, repeated characters.
     """
     if pd.isna(text):
         return ""
     text = str(text)
-    try:
-        # replace_emoji(text, replace='') akan menghapus semua emoji
-        text = emoji.replace_emoji(text, replace='')
-    except AttributeError:
-        # Fallback untuk versi lama: gunakan emoji.get_emoji_regexp()
-        try:
-            text = emoji.get_emoji_regexp().sub('', text)
-        except AttributeError:
-            # Fallback if neither works (e.g. library api changes drastically)
-            pass
-    # Bersihkan spasi ganda yang mungkin timbul
-    text = re.sub(r' +', ' ', text)
-    return text.strip()
 
-def to_lowercase(text: str) -> str:
-    """Ubah teks menjadi lowercase"""
-    if pd.isna(text):
-        return ""
-    return str(text).lower().strip()
+    # 1. Hapus pesan sistem
+    text = clean_system_notifications(text)
 
-def normalize_elongation(text: str) -> str:
-    """Normalisasi elongasi kata (pengulangan karakter)"""
-    if pd.isna(text):
+    # 2. Hapus text metadata di dalam kurung siku/kurung (seperti media metadata)
+    text = re.sub(r"<.*?>", "", text)
+    text = re.sub(r"\[.*?\]", "", text)
+
+    # 3. Hapus hashtag
+    text = re.sub(r"#\S+", "", text)
+
+    # 4. Hapus URL
+    text = re.sub(r"https?://\S+|www\.\S+", "", text)
+
+    # 5. Lowercase (case folding)
+    text = text.lower()
+
+    # 6. Normalisasi Unicode dan Spasi
+    text = unicodedata.normalize("NFKD", text)
+    text = re.sub(r"\s+", " ", text).strip()
+
+    # 7. Anonimisasi data sensitif (email, telepon)
+    text = anonymize_sensitive_data(text)
+
+    # 8. Demojize emoji (mengubah emoji menjadi teks seperti :smiling_face:)
+    text = emoji.demojize(text, delimiters=(" ", " "))
+
+    # 9. Normalisasi karakter berulang
+    text = normalize_repeated_chars(text)
+
+    # 10. Normalisasi slang
+    words = text.split()
+    normalized_words = [normalization_dict.get(w, w) for w in words]
+    text = " ".join(normalized_words)
+
+    # Normalisasi spasi akhir
+    return re.sub(r"\s+", " ", text).strip()
+
+def clean_for_tfidf(embedding_clean_text: str) -> str:
+    """
+    Preprocess text for c-TF-IDF / BM25 representation.
+    Takes output of clean_for_embedding and adds:
+    - Stopword removal
+    - Punctuation removal (keeps only a-z and spaces)
+    - Meaningless token cleaning (removes tokens with length < 2 or non-alphabet remnants)
+    """
+    if not embedding_clean_text:
         return ""
-    text = str(text)
-    return _ELONGATION_RE.sub(r'\1\1', text)
+
+    # 1. Hapus tanda baca/karakter non-alphabet (menyisakan huruf a-z dan spasi saja)
+    text_cleaned = re.sub(r"[^a-z\s]", " ", embedding_clean_text)
+
+    # 2. Tokenisasi untuk stopword removal & pembersihan token tidak bermakna
+    words = text_cleaned.split()
+    filtered_words = []
+    for w in words:
+        # Stopword removal & clean meaningless single characters (token < 2)
+        if w not in all_stopwords and len(w) >= 2:
+            filtered_words.append(w)
+
+    return " ".join(filtered_words)
 
 def has_min_words(text: str, min_words: int = 3) -> bool:
-    """Cek apakah teks mengandung minimal kata yang ditentukan"""
+    """Check if the text has at least the minimum number of words."""
     if pd.isna(text):
         return False
-    words = str(text).split()
-    return len(words) >= min_words
-
-def cleanup_whitespace(text: str) -> str:
-    """
-    Rapikan whitespace:
-    - multiple spaces -> single space
-    - trim awal/akhir
-    """
-    if pd.isna(text):
-        return ""
-    text = str(text)
-    text = _MULTISPACE_RE.sub(" ", text)
-    return text.strip()
+    return len(str(text).split()) >= min_words
 
 def preprocess_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     """
     Preprocess dataframe containing WhatsApp messages.
-
-    Steps:
-    1. HTML tag removal
-    2. URL removal
-    3. Mention normalization
-    4. Emoji removal
-    5. Lowercase normalization
-    6. Elongation normalization
-    7. Minimum word filtering (3 words)
-    8. Whitespace cleanup and empty row removal
+    Splits text processing into:
+    1. Pesan_Embedding: Raw context (with stopwords & punctuation) for IndoBERTweet embeddings.
+    2. Pesan_TFIDF: Highly normalized tokens (no stopwords or punctuation) for c-TF-IDF.
     """
     df = df.copy()
 
-    # Ensure "pesan" exists and create "Pesan" as standard alias
+    # Normalize column names mapping if needed
     if "pesan" in df.columns:
         df["Pesan"] = df["pesan"]
     elif "Pesan" in df.columns:
@@ -111,75 +185,70 @@ def preprocess_dataframe(df: pd.DataFrame) -> pd.DataFrame:
         df["pesan"] = ""
         df["Pesan"] = ""
 
-    # Initialize Pesan_Preprocessed
-    df["Pesan_Preprocessed"] = df["pesan"].fillna("").astype(str)
+    # Hapus baris kosong/nan di kolom pesan asli sebelum drop duplikat
+    df = df.dropna(subset=["pesan"])
+    df = df[df["pesan"].str.strip().ne("")].copy()
 
-    # 1. HTML tag removal
-    total_sebelum = len(df)
-    edited_count = df['Pesan_Preprocessed'].str.contains(r'<.*?>', regex=True, na=False).sum()
-    df['Pesan_Preprocessed'] = df['Pesan_Preprocessed'].apply(
-        lambda x: re.sub(r'<.*?>', '', str(x)).strip() if pd.notna(x) else x
-    )
-    total_sesudah = len(df)
-    print("── Hapus HTML Tags ───────────────────────────────────")
-    print(f"Total baris sebelum  : {total_sebelum:,}")
-    print(f"Pesan mengandung HTML: {edited_count:,}")
-    print(f"Total baris sesudah  : {total_sesudah:,}")
+    # Hapus pesan yang mengandung file kontak/vcf Merpati Rent Car Jember
+    df = df[~df["pesan"].str.contains(".vcf", case=False, na=False, regex=False)].copy()
 
-    # 2. URL removal
-    sebelum = df["Pesan_Preprocessed"].copy()
-    df["Pesan_Preprocessed"] = df["Pesan_Preprocessed"].apply(remove_url)
-    mask = sebelum != df["Pesan_Preprocessed"]
-    url_count = mask.sum()
-    print("── Hapus URL ─────────────────────────────────────────")
-    print(f"Total baris          : {len(df):,}")
-    print(f"Pesan mengandung URL : {url_count:,}")
-    print(f"Persentase terdampak : {url_count / len(df) * 100 if len(df) > 0 else 0:.2f}%")
+    # 1. Hapus duplikat pesan (Hapus duplikat: ✅)
+    df = df.drop_duplicates(subset=["pesan"]).reset_index(drop=True)
 
-    # 3. Mention Normalization
-    sebelum = df['Pesan_Preprocessed'].copy()
-    df['Pesan_Preprocessed'] = df['Pesan_Preprocessed'].apply(replace_mention)
-    mask = sebelum != df['Pesan_Preprocessed']
-    mention_count = mask.sum()
-    print("── Normalisasi Mention ───────────────────────────────")
-    print(f"Total baris            : {len(df):,}")
-    print(f"Baris mengandung mention: {mention_count:,}")
-    print(f"Persentase             : {mention_count / len(df) * 100 if len(df) > 0 else 0:.2f}%")
+    # 2. Anonimisasi Pengirim dan Mention pada Pesan Secara Bersamaan
+    # Ekstrak unique senders
+    unique_senders = df["pengirim"].dropna().unique()
+    senders_to_anonymize = [
+        str(s).strip() for s in unique_senders
+        if not str(s).startswith("User-") and str(s).strip() != ""
+    ]
 
-    # 4. Emoji removal
-    sebelum = df['Pesan_Preprocessed'].copy()
-    df['Pesan_Preprocessed'] = df['Pesan_Preprocessed'].apply(remove_emoji)
-    mask = sebelum != df['Pesan_Preprocessed']
-    emoji_count = mask.sum()
-    print("── Penghapusan Emoji ──────────────────────────────────")
-    print(f"Total baris           : {len(df):,}")
-    print(f"Baris mengandung emoji: {emoji_count:,}")
-    print(f"Persentase            : {emoji_count / len(df) * 100 if len(df) > 0 else 0:.2f}%")
+    # Urutkan berdasarkan panjang karakter menurun agar tidak parsial (e.g. @Yusril Maqoshidana)
+    senders_to_anonymize.sort(key=len, reverse=True)
 
-    # 5. Lowercase
-    df["Pesan_Preprocessed"] = df["Pesan_Preprocessed"].apply(to_lowercase)
+    # Buat map mapping pengirim -> anonymized
+    sender_map = {}
+    for s in senders_to_anonymize:
+        h = hashlib.sha256(s.encode("utf-8")).hexdigest()[:4]
+        # Deteksi jika nomor telepon
+        phone_match = re.search(r"\+?\d[\d\-\s]{8,}\d", s)
+        if phone_match:
+            digits = re.sub(r"\D", "", s)
+            last_4 = digits[-4:] if len(digits) >= 4 else digits
+            anon_name = f"User-{h}·{last_4}"
+        else:
+            anon_name = f"User-{h}"
+        sender_map[s] = anon_name
 
-    # 6. Elongation normalization
-    sebelum = df['Pesan_Preprocessed'].copy()
-    df['Pesan_Preprocessed'] = df['Pesan_Preprocessed'].apply(normalize_elongation)
-    mask = sebelum != df['Pesan_Preprocessed']
-    elongation_count = mask.sum()
-    print("── Normalisasi Elongasi ───────────────────────────────")
-    print(f"Total baris             : {len(df):,}")
-    print(f"Baris mengalami elongasi: {elongation_count:,}")
-    print(f"Persentase              : {elongation_count / len(df) * 100 if len(df) > 0 else 0:.2f}%")
+    # Terapkan anonymization ke kolom pengirim
+    if sender_map:
+        df["pengirim"] = df["pengirim"].map(lambda x: sender_map.get(str(x).strip(), x))
+        if "Pesan" in df.columns:
+            # Fungsi untuk meng-anonimkan mention di pesan
+            def anonymize_mentions(text: str) -> str:
+                if not isinstance(text, str):
+                    return text
+                for orig_name, anon_name in sender_map.items():
+                    escaped_name = re.escape(orig_name)
+                    # Match pattern "@name" atau "@ name" (case-insensitive)
+                    pattern = r"@\s*" + escaped_name
+                    text = re.sub(pattern, f"@{anon_name}", text, flags=re.IGNORECASE)
+                return text
 
-    # 7. Minimum 3 Words Filter
-    total_sebelum = len(df)
-    mask_pendek = ~df["Pesan_Preprocessed"].apply(lambda x: has_min_words(x, 3))
-    pendek_count = mask_pendek.sum()
-    df.loc[mask_pendek, "Pesan_Preprocessed"] = ""
-    print("── Filter Minimum 3 Kata ─────────────────────────────")
-    print(f"Total baris              : {total_sebelum:,}")
-    print(f"Pesan_Preprocessed dikosongkan: {pendek_count:,}")
-    print(f"Persentase terdampak     : {pendek_count / total_sebelum * 100 if total_sebelum > 0 else 0:.2f}%")
+            df["pesan"] = df["pesan"].apply(anonymize_mentions)
+            df["Pesan"] = df["pesan"]
 
-    # 8. Cleanup whitespace & remove empty
-    df["Pesan_Preprocessed"] = df["Pesan_Preprocessed"].apply(cleanup_whitespace)
-    df = df[df["Pesan_Preprocessed"].str.strip().ne("")].copy()
+    # 3. Bersihkan teks menggunakan 1 jalur pemrosesan tunggal
+    df["Pesan_Preprocessed"] = df["pesan"].apply(clean_for_embedding)
+
+    # 4. Cleanup whitespace & filter data kosong
+    df["Pesan_Preprocessed"] = df["Pesan_Preprocessed"].apply(lambda x: re.sub(r"\s+", " ", str(x)).strip())
+
+    # Filter data: minimal 3 kata pada kolom Pesan_Preprocessed agar data yang di-cluster memiliki substansi
+    df = df[df["Pesan_Preprocessed"].apply(lambda x: len(x.split()) >= 3)].copy()
+
+    # Berikan alias kolom untuk kompatibilitas ke bagian lain yang membacanya
+    df["Pesan_Embedding"] = df["Pesan_Preprocessed"]
+    df["Pesan_TFIDF"] = df["Pesan_Preprocessed"]
+
     return df

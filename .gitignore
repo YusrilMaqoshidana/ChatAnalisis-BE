@@ -18,3 +18,7 @@ venv/
 # Logs
 uvicorn.log
 *.log
+
+# Models
+models/
+

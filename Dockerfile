@@ -12,6 +12,10 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Download Hugging Face model during build to cache it inside the image
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('indolem/indobertweet-base-uncased')"
+
+
 # Copy the rest of the application code
 COPY . .
 

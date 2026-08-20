@@ -3,8 +3,6 @@ fastapi==0.115.0
 uvicorn[standard]==0.30.6
 python-multipart==0.0.12
 
-# Object Storage
-minio==7.2.15
 
 # Progress State
 redis==5.0.8
@@ -16,3 +14,10 @@ pydantic-settings==2.6.0  # baca .env
 # Data Manipulation & Text Processing
 pandas
 emoji
+sentence-transformers
+umap-learn
+scikit-learn
+bertopic
+Sastrawi
+nltk
+gensim

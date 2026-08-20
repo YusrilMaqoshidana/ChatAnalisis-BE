@@ -13,11 +13,6 @@ class Settings(BaseSettings):
     PORT: int = 8000
 
     # --- Infrastructure ---
-    MINIO_ENDPOINT: str = "localhost:9000"
-    MINIO_ACCESS_KEY: str = "minioadmin"
-    MINIO_SECRET_KEY: str = "minioadmin"
-    MINIO_BUCKET: str = "bertopic"
-    MINIO_SECURE: bool = False
     REDIS_URL: str = "redis://localhost:6379/0"
     PROGRESS_TTL_SECONDS: int = 86400
 
