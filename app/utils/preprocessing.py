@@ -1,6 +1,7 @@
 """
 Utility module for WhatsApp message pre-processing based on b_preprocessing_web.ipynb.
-Separates cleaning paths for IndoBERTweet Embedding (retains context) and c-TF-IDF / BM25 (highly normalized).
+Cleans noise, system messages, URLs, emojis, slang, and repeated characters into a single preprocessed text column (Pesan_Preprocessed).
+Stopword removal is handled by CountVectorizer during topic representation.
 """
 
 import re
@@ -8,14 +9,6 @@ import emoji
 import hashlib
 import unicodedata
 import pandas as pd
-from Sastrawi.StopWordRemover.StopWordRemoverFactory import StopWordRemoverFactory
-
-# Initialize Sastrawi Stopword List
-factory = StopWordRemoverFactory()
-sastrawi_stopwords = set(factory.get_stop_words())
-
-specific_words = {"user", "amp", "wa", "whatsapp", "chat", "chatnya", "grup", "group"}
-all_stopwords = sastrawi_stopwords.union(specific_words)
 
 # Slang normalization dictionary
 normalization_dict = {
@@ -78,16 +71,16 @@ def normalize_repeated_chars(text: str) -> str:
     return re.sub(r"(.)\1{2,}", r"\1\1", text)
 
 def anonymize_sensitive_data(text: str) -> str:
-    """Anonymize emails and phone numbers in the text body."""
+    """Anonymize/remove emails and phone numbers in the text body."""
     if not isinstance(text, str):
         return text
-    # Mask email addresses
+    # Mask/remove email addresses
     email_pattern = r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b"
     text = re.sub(email_pattern, "", text)
 
-    # Mask general phone numbers (not starting with @ to avoid double-masking mentions)
+    # Mask/remove general phone numbers (not starting with @ to avoid removing mentions)
     phone_pattern = r"(?<!@)\b\+?\d{1,3}[-.\s]?\(?\d{1,3}\)?[-.\s]?\d{3,4}[-.\s]?\d{3,4}\b"
-    text = re.sub(phone_pattern, "@USER", text)
+    text = re.sub(phone_pattern, "", text)
     return text
 
 def clean_for_embedding(text: str) -> str:
@@ -137,30 +130,6 @@ def clean_for_embedding(text: str) -> str:
     # Normalisasi spasi akhir
     return re.sub(r"\s+", " ", text).strip()
 
-def clean_for_tfidf(embedding_clean_text: str) -> str:
-    """
-    Preprocess text for c-TF-IDF / BM25 representation.
-    Takes output of clean_for_embedding and adds:
-    - Stopword removal
-    - Punctuation removal (keeps only a-z and spaces)
-    - Meaningless token cleaning (removes tokens with length < 2 or non-alphabet remnants)
-    """
-    if not embedding_clean_text:
-        return ""
-
-    # 1. Hapus tanda baca/karakter non-alphabet (menyisakan huruf a-z dan spasi saja)
-    text_cleaned = re.sub(r"[^a-z\s]", " ", embedding_clean_text)
-
-    # 2. Tokenisasi untuk stopword removal & pembersihan token tidak bermakna
-    words = text_cleaned.split()
-    filtered_words = []
-    for w in words:
-        # Stopword removal & clean meaningless single characters (token < 2)
-        if w not in all_stopwords and len(w) >= 2:
-            filtered_words.append(w)
-
-    return " ".join(filtered_words)
-
 def has_min_words(text: str, min_words: int = 3) -> bool:
     """Check if the text has at least the minimum number of words."""
     if pd.isna(text):
@@ -168,12 +137,6 @@ def has_min_words(text: str, min_words: int = 3) -> bool:
     return len(str(text).split()) >= min_words
 
 def preprocess_dataframe(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Preprocess dataframe containing WhatsApp messages.
-    Splits text processing into:
-    1. Pesan_Embedding: Raw context (with stopwords & punctuation) for IndoBERTweet embeddings.
-    2. Pesan_TFIDF: Highly normalized tokens (no stopwords or punctuation) for c-TF-IDF.
-    """
     df = df.copy()
 
     # Normalize column names mapping if needed
@@ -246,9 +209,5 @@ def preprocess_dataframe(df: pd.DataFrame) -> pd.DataFrame:
 
     # Filter data: minimal 3 kata pada kolom Pesan_Preprocessed agar data yang di-cluster memiliki substansi
     df = df[df["Pesan_Preprocessed"].apply(lambda x: len(x.split()) >= 3)].copy()
-
-    # Berikan alias kolom untuk kompatibilitas ke bagian lain yang membacanya
-    df["Pesan_Embedding"] = df["Pesan_Preprocessed"]
-    df["Pesan_TFIDF"] = df["Pesan_Preprocessed"]
 
     return df
