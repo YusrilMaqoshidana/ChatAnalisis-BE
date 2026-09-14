@@ -13,7 +13,6 @@ class Settings(BaseSettings):
     PORT: int = 8000
 
     # --- Infrastructure ---
-    REDIS_URL: str = "redis://localhost:6379/0"
     PROGRESS_TTL_SECONDS: int = 86400
 
     # --- CORS ---

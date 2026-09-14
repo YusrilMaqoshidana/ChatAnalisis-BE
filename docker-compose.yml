@@ -1,0 +1,50 @@
+services:
+  # ----------------------------------------------------
+  # Backend Service (FastAPI)
+  # ----------------------------------------------------
+  backend:
+    build:
+      context: .
+      network: host
+    container_name: chatanalisis-backend
+    ports:
+      - "8000:8000"
+    environment:
+      - CORS_ORIGINS=["*"]
+      # Additional parameters from .env
+      - MAX_FILE_SIZE_MB=10
+      - ZIP_MAX_EXTRACTED_MB=200
+      - HF_HUB_OFFLINE=1
+      - TRANSFORMERS_OFFLINE=1
+    volumes:
+      - backend_data:/app/storage
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+    networks:
+      - chatanalisis-network
+
+volumes:
+  backend_data:
+    driver: local
+
+networks:
+  chatanalisis-network:
+    name: chatanalisis-network
+
+# ==============================================================================
+# DOKUMENTASI & PANDUAN PENGGUNAAN (BACKEND DOCKER COMPOSE)
+# ==============================================================================
+# CARA MENJALANKAN:
+# 1. Pastikan network docker sudah ada atau biarkan compose membuatnya secara otomatis.
+# 2. Jalankan perintah berikut di terminal:
+#    docker compose up --build -d
+#
+# 3. Menghentikan Layanan:
+#    docker compose down
+# ==============================================================================
