@@ -18,16 +18,23 @@ services:
       - TRANSFORMERS_OFFLINE=1
     volumes:
       - backend_data:/app/storage
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
     restart: unless-stopped
     networks:
-      - chatanalisis-network
+      chatanalisis-network:
+        aliases:
+          - backend
+          - chatanalisis-backend
+      proxy-net:
+        aliases:
+          - chatanalisis-be
+          - chatanalisis-backend
 
 volumes:
   backend_data:
@@ -36,6 +43,9 @@ volumes:
 networks:
   chatanalisis-network:
     name: chatanalisis-network
+    external: true
+  proxy-net:
+    external: true
 
 # ==============================================================================
 # DOKUMENTASI & PANDUAN PENGGUNAAN (BACKEND DOCKER COMPOSE)
