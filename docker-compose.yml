@@ -7,15 +7,14 @@ services:
       context: .
       network: host
     container_name: chatanalisis-backend
-    ports:
-      - "8000:8000"
+    # Expose port ke jaringan internal Docker (proxy-net), TIDAK dipublikasikan ke IP publik host
+    expose:
+      - "8000"
     environment:
       - CORS_ORIGINS=["*"]
       # Additional parameters from .env
       - MAX_FILE_SIZE_MB=10
       - ZIP_MAX_EXTRACTED_MB=200
-      - HF_HUB_OFFLINE=1
-      - TRANSFORMERS_OFFLINE=1
     volumes:
       - backend_data:/app/storage
     # deploy:
