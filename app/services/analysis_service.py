@@ -4,7 +4,6 @@ import logging
 import time
 import os
 from datetime import datetime
-from typing import Dict, List
 
 import anyio
 import pandas as pd
@@ -38,11 +37,11 @@ def parse_date(date_str: str) -> datetime | None:
         return None
     date_str = date_str.strip()
     for fmt in (
-        "%Y-%m-%d %H:%M:%S", 
-        "%Y-%m-%d %H:%M", 
-        "%Y-%m-%d", 
-        "%d/%m/%Y %H:%M:%S", 
-        "%d/%m/%Y %H:%M", 
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d %H:%M",
+        "%Y-%m-%d",
+        "%d/%m/%Y %H:%M:%S",
+        "%d/%m/%Y %H:%M",
         "%d/%m/%Y",
         "%d/%m/%y %I.%M %p",
         "%d/%m/%y %H.%M",
@@ -83,46 +82,46 @@ async def run_analysis_pipeline_task(
         # Save original context file
         orig_object_name = f"{session_id}.csv"
         save_file(orig_object_name, original_csv_bytes)
-        
+
         # 1. Update Step 1 Status
         event = {"step_id": 1, "status": "completed", "time_elapsed": "100ms"}
         progress_history[session_id].append(event)
         await sse_manager.broadcast(session_id, event)
-        
+
         # 2. Step 2: Preprocessing
         event = {"step_id": 2, "status": "running"}
         progress_history[session_id].append(event)
         await sse_manager.broadcast(session_id, event)
-        
+
         start_t = time.time()
         df_preprocessed = preprocess_dataframe(df_raw)
-        
+
         if df_preprocessed.empty:
             err_event = {"step_id": 2, "status": "failed", "error": "Tidak ada pesan setelah preprocessing."}
             progress_history[session_id].append(err_event)
             await sse_manager.broadcast(session_id, err_event)
             return
-            
+
         elapsed_2 = f"{int((time.time() - start_t) * 1000)}ms"
-        
+
         event = {"step_id": 2, "status": "completed", "time_elapsed": elapsed_2}
         progress_history[session_id].append(event)
         await sse_manager.broadcast(session_id, event)
-        
+
         docs = df_preprocessed["Pesan_Preprocessed"].tolist()
         if len(docs) < 5:
             err_event = {"step_id": 3, "status": "failed", "error": "Jumlah pesan terlalu sedikit (min 5 pesan) untuk pemodelan topik."}
             progress_history[session_id].append(err_event)
             await sse_manager.broadcast(session_id, err_event)
             return
-            
+
         # 3. Step 3: IndoBERTweet Embedding
         event = {"step_id": 3, "status": "running"}
         progress_history[session_id].append(event)
         await sse_manager.broadcast(session_id, event)
-        
+
         start_t = time.time()
-        
+
         def encode_docs():
             from sentence_transformers import SentenceTransformer
             base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -131,42 +130,42 @@ async def run_analysis_pipeline_task(
             embedder = SentenceTransformer(model_to_load)
             emb = embedder.encode(docs, batch_size=64, show_progress_bar=False, convert_to_numpy=True)
             return embedder, emb
-            
+
         embedder, embeddings = await anyio.to_thread.run_sync(encode_docs)
         elapsed_3 = f"{int((time.time() - start_t) * 1000)}ms"
-        
+
         event = {"step_id": 3, "status": "completed", "time_elapsed": elapsed_3}
         progress_history[session_id].append(event)
         await sse_manager.broadcast(session_id, event)
-        
+
         # 4. Step 4: UMAP Dimension Reduction
         event = {"step_id": 4, "status": "running"}
         progress_history[session_id].append(event)
         await sse_manager.broadcast(session_id, event)
-        
+
         start_t = time.time()
-        
+
         def run_umap(emb):
             from umap import UMAP
             from app.utils.topic_modeling import SHARED_UMAP_PARAMS
             umap_model = UMAP(**SHARED_UMAP_PARAMS)
             reduced = umap_model.fit_transform(emb)
             return umap_model, reduced
-            
+
         umap_model, reduced_embeddings = await anyio.to_thread.run_sync(run_umap, embeddings)
         elapsed_4 = f"{int((time.time() - start_t) * 1000)}ms"
-        
+
         event = {"step_id": 4, "status": "completed", "time_elapsed": elapsed_4}
         progress_history[session_id].append(event)
         await sse_manager.broadcast(session_id, event)
-        
+
         # 5. Step 5: BIRCH Clustering
         event = {"step_id": 5, "status": "running"}
         progress_history[session_id].append(event)
         await sse_manager.broadcast(session_id, event)
-        
+
         start_t = time.time()
-        
+
         def run_birch(reduced):
             from app.utils.topic_modeling import BirchWithOutliers
             birch_model = BirchWithOutliers(
@@ -179,29 +178,29 @@ async def run_analysis_pipeline_task(
             )
             topics = birch_model.fit_predict(reduced)
             return birch_model, topics
-            
+
         birch_model, topics = await anyio.to_thread.run_sync(run_birch, reduced_embeddings)
         elapsed_5 = f"{int((time.time() - start_t) * 1000)}ms"
-        
+
         event = {"step_id": 5, "status": "completed", "time_elapsed": elapsed_5}
         progress_history[session_id].append(event)
         await sse_manager.broadcast(session_id, event)
-        
+
         # 6. Step 6: c-TF-IDF keyword extraction & evaluations
         event = {"step_id": 6, "status": "running"}
         progress_history[session_id].append(event)
         await sse_manager.broadcast(session_id, event)
-        
+
         start_t = time.time()
-        
+
         def run_bertopic_fit(embedder, umap_model, birch_model, topics, embeddings):
             from bertopic import BERTopic
             from sklearn.feature_extraction.text import CountVectorizer
             from app.utils.topic_modeling import BM25Representation, STOPWORDS
-            
+
             vectorizer_model = CountVectorizer(stop_words=list(STOPWORDS), ngram_range=(1, 2))
             bm25_model = BM25Representation(vectorizer=vectorizer_model, k1=1.2, b=0.5)
-            
+
             topic_model = BERTopic(
                 embedding_model=embedder,
                 umap_model=umap_model,
@@ -210,15 +209,15 @@ async def run_analysis_pipeline_task(
                 ctfidf_model=bm25_model
             )
             topic_model.fit(docs, embeddings=embeddings, y=topics)
-            
+
             # Reduce topics using 'auto' only if there are enough topics to reduce
             unique_non_outliers = set(topic_model.topics_) - {-1}
             if len(unique_non_outliers) > 1:
                 topic_model.reduce_topics(docs, nr_topics='auto')
-            
+
             # Fit standard document-level BM25
             bm25_model.fit(docs)
-            
+
             # Monkey-patch get_topic for document-level BM25 extraction
             def bm25_get_topic(topic_id):
                 if topic_id == -1:
@@ -228,9 +227,9 @@ async def run_analysis_pipeline_task(
                     return [("unknown", 0.0)]
                 res = bm25_model.extract_topics(indices.tolist(), top_n=10)
                 return res if res else [("unknown", 0.0)]
-                
+
             topic_model.get_topic = bm25_get_topic
-            
+
             # Update topic_representations_ internal state
             unique_topics = set(topic_model.topics_)
             topic_model.topic_representations_ = {}
@@ -240,7 +239,7 @@ async def run_analysis_pipeline_task(
                     continue
                 res = bm25_get_topic(tid)
                 topic_model.topic_representations_[tid] = res if res else [("unknown", 0.0)]
-            
+
             topics_info = topic_model.get_topic_info()
             topics_list = []
             for _, row in topics_info.iterrows():
@@ -256,26 +255,26 @@ async def run_analysis_pipeline_task(
                     "message_count": count,
                     "keywords": kws
                 })
-            
+
             updated_topics = [int(t) for t in topic_model.topics_]
             return topic_model, topics_list, updated_topics
-            
+
         topic_model, topics_list, topics = await anyio.to_thread.run_sync(
             run_bertopic_fit, embedder, umap_model, birch_model, topics, embeddings
         )
         elapsed_6 = f"{int((time.time() - start_t) * 1000)}ms"
-        
+
         event = {"step_id": 6, "status": "completed", "time_elapsed": elapsed_6}
         progress_history[session_id].append(event)
         await sse_manager.broadcast(session_id, event)
-        
+
         # 7. Step 7: Hitung metrik evaluasi
         event = {"step_id": 7, "status": "running"}
         progress_history[session_id].append(event)
         await sse_manager.broadcast(session_id, event)
-        
+
         start_t = time.time()
-        
+
         def run_bertopic_eval_only(topic_model, topics, embeddings):
             from app.utils.topic_modeling import (
                 calculate_topic_diversity,
@@ -283,7 +282,7 @@ async def run_analysis_pipeline_task(
                 calculate_embedding_density,
                 calculate_intra_topic_similarity
             )
-            
+
             diversity, topic_words_list, _ = calculate_topic_diversity(topic_model)
             npmi = calculate_npmi(docs, topic_words_list, topic_model.vectorizer_model)
             ed = calculate_embedding_density(
@@ -294,7 +293,7 @@ async def run_analysis_pipeline_task(
                 vectorizer_model=topic_model.vectorizer_model
             )
             its = calculate_intra_topic_similarity(embeddings, np.array(topics))
-            
+
             metrics = {
                 "topic_diversity": round(float(diversity), 4),
                 "c_npmi": round(float(npmi), 4) if npmi is not None else 0.0,
@@ -302,29 +301,29 @@ async def run_analysis_pipeline_task(
                 "intra_topic_similarity": round(float(its), 4) if its is not None else 0.0,
             }
             return metrics
-            
+
         metrics = await anyio.to_thread.run_sync(
             run_bertopic_eval_only, topic_model, topics, embeddings
         )
         elapsed_7 = f"{int((time.time() - start_t) * 1000)}ms"
-        
+
         event = {"step_id": 7, "status": "completed", "time_elapsed": elapsed_7}
         progress_history[session_id].append(event)
         await sse_manager.broadcast(session_id, event)
-        
+
         # 8. Step 8: Simpan hasil analisis di database dengan kunci session_id / jobId
         event = {"step_id": 8, "status": "running"}
         progress_history[session_id].append(event)
         await sse_manager.broadcast(session_id, event)
-        
+
         start_t = time.time()
-        
+
         df_preprocessed["topic_id"] = topics
         leaderboard_data = calculate_leaderboard_pandas(df_preprocessed, limit=10)
         top_senders = [{"name": s["username"], "message_count": s["message_count"]} for s in leaderboard_data]
         active_dates = calculate_daily_graph_pandas(df_preprocessed, fill_missing=True)
         active_hours = calculate_hourly_activity(df_preprocessed)
-        
+
         summary_data = {
             "metrics": metrics,
             "topic_count": len(topics_list),
@@ -333,29 +332,29 @@ async def run_analysis_pipeline_task(
             "active_dates": active_dates,
             "active_hours": active_hours
         }
-        
+
         # Save summary result JSON
         result_json = json.dumps(summary_data, ensure_ascii=False)
         result_bytes = result_json.encode("utf-8")
         result_object_name = f"{session_id}_result.json"
         save_file(result_object_name, result_bytes)
-        
+
         # Save labeled CSV
         label_map = {t["topic_id"]: t["label"] for t in topics_list}
         label_map[-1] = "Lain-lain"
         df_preprocessed["topic_label"] = df_preprocessed["topic_id"].map(label_map)
-        
+
         labeled_csv_str = df_preprocessed.to_csv(index=False)
         labeled_csv_bytes = labeled_csv_str.encode("utf-8")
         labeled_object_name = f"{session_id}_labeled.csv"
         save_file(labeled_object_name, labeled_csv_bytes)
-        
+
         elapsed_8 = f"{int((time.time() - start_t) * 1000)}ms"
-        
+
         event = {"step_id": 8, "status": "completed", "time_elapsed": elapsed_8, "done": True}
         progress_history[session_id].append(event)
         await sse_manager.broadcast(session_id, event)
-        
+
     except Exception as exc:
         logger.exception("Error inside background analysis task")
         err_event = {"status": "failed", "error": str(exc)}
@@ -377,16 +376,16 @@ def get_results_summary(job_id: str) -> ResultsSummaryDTO:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Gagal membaca storage: {e}"
         )
-        
+
     try:
         data = json.loads(content_bytes.decode("utf-8"))
-        
+
         metrics = MetricsDTO(**data["metrics"])
         topics = [TopicDTO(**t) for t in data["topics"]]
         top_senders = [SenderDTO(**s) for s in data["top_senders"]]
         active_dates = [DateActivityDTO(**d) for d in data["active_dates"]]
         active_hours = [HourActivityDTO(**h) for h in data["active_hours"]]
-        
+
         return ResultsSummaryDTO(
             metrics=metrics,
             topic_count=data["topic_count"],
@@ -410,26 +409,26 @@ def delete_results(job_id: str) -> dict:
         f"{job_id}_result.json",
         f"{job_id}_labeled.csv"
     ]
-    
+
     for obj_name in objects_to_delete:
         try:
             delete_file(obj_name)
         except Exception as exc:
             logger.warning(f"Gagal menghapus objek {obj_name}: {exc}")
-            
+
     if job_id in progress_history:
         try:
             del progress_history[job_id]
         except Exception:
             pass
-            
+
     return {"session_id": job_id}
 
 def get_topic_detail(job_id: str, topic_id: int) -> TopicDetailDTO:
     """Retrieve detailed messages belonging to a specific topic cluster."""
     labeled_object_name = f"{job_id}_labeled.csv"
     result_object_name = f"{job_id}_result.json"
-    
+
     try:
         csv_bytes = read_file(labeled_object_name)
     except FileNotFoundError:
@@ -437,15 +436,15 @@ def get_topic_detail(job_id: str, topic_id: int) -> TopicDetailDTO:
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Data untuk session_id tersebut tidak ditemukan di storage."
         )
-        
+
     try:
         df = pd.read_csv(io.BytesIO(csv_bytes), dtype=str)
         if df.empty:
             return TopicDetailDTO(topic_id=topic_id, label=f"Topic {topic_id}", messages=[])
-            
+
         df["topic_id"] = df["topic_id"].astype(int)
         df_topic = df[df["topic_id"] == topic_id]
-        
+
         label = f"Topik {topic_id}"
         keywords = []
         try:
@@ -460,7 +459,7 @@ def get_topic_detail(job_id: str, topic_id: int) -> TopicDetailDTO:
                 label = "Lain-lain"
         except Exception:
             pass
-            
+
         # Urutkan pesan berdasarkan kecocokan kata kunci (keywords) representasi topik
         if keywords and not df_topic.empty:
             kw_set = [kw.lower() for kw in keywords]
@@ -468,7 +467,7 @@ def get_topic_detail(job_id: str, topic_id: int) -> TopicDetailDTO:
                 msg_content = str(row.get("pesan", "")).lower()
                 # Hitung berapa banyak kata kunci representasi yang muncul di pesan asli
                 return sum(1 for kw in kw_set if kw in msg_content)
-            
+
             df_topic = df_topic.copy()
             df_topic["match_score"] = df_topic.apply(calculate_row_score, axis=1)
             df_topic["index"] = pd.to_numeric(df_topic["index"], errors="coerce").fillna(0).astype(int)
@@ -480,7 +479,7 @@ def get_topic_detail(job_id: str, topic_id: int) -> TopicDetailDTO:
             sender_val = row.get("pengirim", "")
             content_val = row.get("pesan", "")
             timestamp_val = row.get("timestamp", "")
-            
+
             messages.append(
                 MessageDTO(
                     message_id=f"msg_{idx_val}",
@@ -489,7 +488,7 @@ def get_topic_detail(job_id: str, topic_id: int) -> TopicDetailDTO:
                     timestamp=str(timestamp_val) if pd.notna(timestamp_val) else ""
                 )
             )
-            
+
         return TopicDetailDTO(
             topic_id=topic_id,
             label=label,
@@ -504,7 +503,7 @@ def get_topic_detail(job_id: str, topic_id: int) -> TopicDetailDTO:
 def get_message_context(job_id: str, message_id: str) -> MessageContextDTO:
     """Retrieve chronological context (timeline) around a specific message."""
     original_object_name = f"{job_id}.csv"
-    
+
     try:
         if message_id.startswith("msg_"):
             parts = message_id.split("_")
@@ -516,7 +515,7 @@ def get_message_context(job_id: str, message_id: str) -> MessageContextDTO:
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Format ID pesan tidak valid: {message_id}"
         )
-        
+
     try:
         csv_bytes = read_file(original_object_name)
     except FileNotFoundError:
@@ -524,7 +523,7 @@ def get_message_context(job_id: str, message_id: str) -> MessageContextDTO:
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Data untuk session_id tersebut tidak ditemukan di storage."
         )
-        
+
     try:
         df = pd.read_csv(io.BytesIO(csv_bytes), dtype=str)
         if df.empty:
@@ -532,18 +531,18 @@ def get_message_context(job_id: str, message_id: str) -> MessageContextDTO:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="File riwayat chat kosong."
             )
-            
+
         if "index" not in df.columns:
             df["index"] = df.index
         df["index"] = df["index"].astype(int)
-        
+
         df_target = df[df["index"] == target_index]
         if df_target.empty:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Pesan dengan ID {message_id} tidak ditemukan."
             )
-            
+
         target_row = df_target.iloc[0]
         focused_msg = MessageDTO(
             message_id=message_id,
@@ -551,16 +550,16 @@ def get_message_context(job_id: str, message_id: str) -> MessageContextDTO:
             content=str(target_row.get("pesan", "")) if pd.notna(target_row.get("pesan")) else "",
             timestamp=str(target_row.get("timestamp", "")) if pd.notna(target_row.get("timestamp")) else ""
         )
-        
+
         df_slice = df[df["index"].between(target_index - 5, target_index + 5)].sort_values("index")
-        
+
         context_messages = []
         for _, row in df_slice.iterrows():
             row_idx = int(row.get("index"))
             sender_val = row.get("pengirim", "")
             content_val = row.get("pesan", "")
             timestamp_val = row.get("timestamp", "")
-            
+
             context_messages.append(
                 ContextMessageDTO(
                     message_id=f"msg_{row_idx}",
@@ -570,7 +569,7 @@ def get_message_context(job_id: str, message_id: str) -> MessageContextDTO:
                     is_focused=(row_idx == target_index)
                 )
             )
-            
+
         return MessageContextDTO(
             focused_message=focused_msg,
             context_messages=context_messages
