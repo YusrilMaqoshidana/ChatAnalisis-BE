@@ -1,11 +1,11 @@
 from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
-    """Application settings."""
+    """Application settings for CPU branch."""
 
     # --- App Info ---
     APP_NAME: str = "ChatAnalisis API"
-    APP_DESCRIPTION: str = "API untuk Analisis Chat WhatsApp"
+    APP_DESCRIPTION: str = "API untuk Analisis Chat WhatsApp (CPU Optimized)"
     APP_VERSION: str = "1.0.0"
 
     # --- Server ---
@@ -17,6 +17,13 @@ class Settings(BaseSettings):
 
     # --- CORS ---
     CORS_ORIGINS: list[str] = ["https://chatanalisis.yusrilmaqoshidana.my.id"]
+
+    # --- CPU Optimization Settings ---
+    TORCH_NUM_THREADS: int = 0  # 0 means auto-detect os.cpu_count()
+    EMBEDDING_BATCH_SIZE: int = 64
+    MAX_SEQ_LENGTH: int = 128
+    ENABLE_DYNAMIC_QUANTIZATION: bool = False
+    DEVICE: str = "cpu"
 
     model_config = {
         "env_file": ".env",

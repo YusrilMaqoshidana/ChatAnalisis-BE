@@ -14,8 +14,6 @@ from umap import UMAP
 from sklearn.cluster import Birch
 from sklearn.metrics.pairwise import cosine_similarity
 from bertopic import BERTopic
-from gensim.corpora.dictionary import Dictionary
-from gensim.models.coherencemodel import CoherenceModel
 import gc
 import torch
 
@@ -327,6 +325,9 @@ def calculate_npmi(texts: List[str], topic_words_list: List[List[str]], vectoriz
     if not topic_words_list:
         return None
     try:
+        from gensim.corpora.dictionary import Dictionary
+        from gensim.models.coherencemodel import CoherenceModel
+
         if vectorizer_model is not None and hasattr(vectorizer_model, 'build_analyzer'):
             analyzer = vectorizer_model.build_analyzer()
             tokenized = [analyzer(text) for text in texts]
@@ -509,18 +510,9 @@ def run_topic_modeling_pipeline(
         logger.info(f"Loading SentenceTransformer model from Hugging Face Hub: {embedding_model_name}")
         model_name_to_load = embedding_model_name
 
-    # 1. Load embedding model and extract embeddings
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-        gc.collect()
-
-    embedder = SentenceTransformer(model_name_to_load)
-    embeddings = embedder.encode(
-        docs,
-        batch_size=64,
-        show_progress_bar=False,
-        convert_to_numpy=True
-    )
+    # 1. Load embedding model and extract embeddings via CPU embedding service
+    from app.services.embedding_service import compute_embeddings_cpu
+    embedder, embeddings = compute_embeddings_cpu(docs)
 
     # 2. Build UMAP
     umap_model = UMAP(**SHARED_UMAP_PARAMS)
@@ -598,8 +590,6 @@ def run_topic_modeling_pipeline(
 
     # Clean memory
     del embedder
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
     gc.collect()
 
     metrics = {
