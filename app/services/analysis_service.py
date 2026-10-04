@@ -122,16 +122,8 @@ async def run_analysis_pipeline_task(
 
         start_t = time.time()
 
-        def encode_docs():
-            from sentence_transformers import SentenceTransformer
-            base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-            local_model_path = os.path.join(base_dir, "models", "indobertweet-base-uncased")
-            model_to_load = local_model_path if os.path.exists(local_model_path) else "indolem/indobertweet-base-uncased"
-            embedder = SentenceTransformer(model_to_load)
-            emb = embedder.encode(docs, batch_size=64, show_progress_bar=False, convert_to_numpy=True)
-            return embedder, emb
-
-        embedder, embeddings = await anyio.to_thread.run_sync(encode_docs)
+        from app.services.embedding_service import compute_embeddings_adaptive
+        embedder, embeddings = await anyio.to_thread.run_sync(compute_embeddings_adaptive, session_id, docs)
         elapsed_3 = f"{int((time.time() - start_t) * 1000)}ms"
 
         event = {"step_id": 3, "status": "completed", "time_elapsed": elapsed_3}

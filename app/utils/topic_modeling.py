@@ -14,8 +14,6 @@ from umap import UMAP
 from sklearn.cluster import Birch
 from sklearn.metrics.pairwise import cosine_similarity
 from bertopic import BERTopic
-from gensim.corpora.dictionary import Dictionary
-from gensim.models.coherencemodel import CoherenceModel
 import gc
 import torch
 
@@ -327,6 +325,9 @@ def calculate_npmi(texts: List[str], topic_words_list: List[List[str]], vectoriz
     if not topic_words_list:
         return None
     try:
+        from gensim.corpora.dictionary import Dictionary
+        from gensim.models.coherencemodel import CoherenceModel
+
         if vectorizer_model is not None and hasattr(vectorizer_model, 'build_analyzer'):
             analyzer = vectorizer_model.build_analyzer()
             tokenized = [analyzer(text) for text in texts]
@@ -509,21 +510,24 @@ def run_topic_modeling_pipeline(
         logger.info(f"Loading SentenceTransformer model from Hugging Face Hub: {embedding_model_name}")
         model_name_to_load = embedding_model_name
 
-    # 1. Load embedding model and extract embeddings
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-        gc.collect()
+    # 1. Load embedding model and extract embeddings using adaptive embedding service
+    from app.services.embedding_service import compute_embeddings_adaptive
+    from app.config import settings
 
-    embedder = SentenceTransformer(model_name_to_load)
-    embeddings = embedder.encode(
-        docs,
-        batch_size=64,
-        show_progress_bar=False,
-        convert_to_numpy=True
-    )
+    embedder, embeddings = compute_embeddings_adaptive("topic_modeling", docs)
 
-    # 2. Build UMAP
-    umap_model = UMAP(**SHARED_UMAP_PARAMS)
+    # 2. Build UMAP (cuML GPU UMAP optional via setting, with automatic CPU fallback)
+    umap_model = None
+    if getattr(settings, "USE_CUML_UMAP", False):
+        try:
+            from cuml.manifold import UMAP as cuUMAP
+            logger.info("Using GPU-accelerated cuML UMAP for dimensionality reduction.")
+            umap_model = cuUMAP(**SHARED_UMAP_PARAMS)
+        except Exception as exc:
+            logger.warning(f"cuML UMAP initialization failed ({exc}). Falling back to CPU UMAP (umap-learn).")
+
+    if umap_model is None:
+        umap_model = UMAP(**SHARED_UMAP_PARAMS)
 
     # 3. Build BIRCH Clustering with outliers and proposed params
     birch_model = BirchWithOutliers(
