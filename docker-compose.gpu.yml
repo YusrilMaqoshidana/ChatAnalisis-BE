@@ -1,0 +1,23 @@
+version: "3.8"
+
+services:
+  chatanalisis-be-gpu:
+    build:
+      context: .
+      dockerfile: Dockerfile.gpu
+    container_name: chatanalisis-be-gpu
+    restart: always
+    ports:
+      - "8001:8001"
+    environment:
+      - DEVICE=auto
+      - MIN_FREE_VRAM_MB=1000
+      - GPU_INITIAL_BATCH_SIZE=64
+      - USE_CUML_UMAP=false
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
