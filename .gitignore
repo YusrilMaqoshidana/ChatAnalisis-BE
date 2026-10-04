@@ -19,6 +19,7 @@ venv/
 uvicorn.log
 *.log
 
-# Models
+# Models & Storage
 models/
-
+storage/
+*.bak

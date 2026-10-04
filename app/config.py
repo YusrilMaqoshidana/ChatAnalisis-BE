@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     PROGRESS_TTL_SECONDS: int = 86400
 
     # --- CORS ---
-    CORS_ORIGINS: list[str] = ["*"]
+    CORS_ORIGINS: list[str] = ["https://chatanalisis.yusrilmaqoshidana.my.id"]
 
     model_config = {
         "env_file": ".env",

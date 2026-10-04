@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse
 from app.config import settings
 from app.api.routes import analysis
 from app.schemas import BaseResponse
+from app.middleware import RateLimitMiddleware, SecurityHeadersMiddleware
 
 
 logger = logging.getLogger(__name__)
@@ -35,6 +36,8 @@ def create_app() -> FastAPI:
     app.add_exception_handler(Exception, _unhandled_exception_handler)
 
     # --- Middleware ---
+    app.add_middleware(SecurityHeadersMiddleware)
+    app.add_middleware(RateLimitMiddleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.CORS_ORIGINS,
