@@ -8,7 +8,7 @@ services:
     container_name: chatanalisis-be-gpu
     restart: always
     ports:
-      - "8001:8001"
+      - "8000:8000"
     environment:
       - DEVICE=auto
       - MIN_FREE_VRAM_MB=1000
