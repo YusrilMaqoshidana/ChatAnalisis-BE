@@ -76,6 +76,7 @@ async def run_analysis_pipeline_task(
     session_id: str,
     df_raw: pd.DataFrame,
     original_csv_bytes: bytes,
+    mode: str = "fast",
 ):
     """Background task to run the complete data processing, BERTopic, and metrics calculation."""
     try:
@@ -115,7 +116,7 @@ async def run_analysis_pipeline_task(
             await sse_manager.broadcast(session_id, err_event)
             return
 
-        # 3. Step 3: IndoBERTweet Embedding
+        # 3. Step 3: IndoBERTweet Embedding (menggunakan singleton ModelManager)
         event = {"step_id": 3, "status": "running"}
         progress_history[session_id].append(event)
         await sse_manager.broadcast(session_id, event)
@@ -123,12 +124,10 @@ async def run_analysis_pipeline_task(
         start_t = time.time()
 
         def encode_docs():
-            from sentence_transformers import SentenceTransformer
-            base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-            local_model_path = os.path.join(base_dir, "models", "indobertweet-base-uncased")
-            model_to_load = local_model_path if os.path.exists(local_model_path) else "indolem/indobertweet-base-uncased"
-            embedder = SentenceTransformer(model_to_load)
-            emb = embedder.encode(docs, batch_size=64, show_progress_bar=False, convert_to_numpy=True)
+            from app.infrastructure.model_manager import get_model_manager
+            manager = get_model_manager()
+            embedder = manager.get_model()
+            emb = manager.encode(docs)
             return embedder, emb
 
         embedder, embeddings = await anyio.to_thread.run_sync(encode_docs)
@@ -275,41 +274,60 @@ async def run_analysis_pipeline_task(
 
         start_t = time.time()
 
-        def run_bertopic_eval_only(topic_model, topics, embeddings):
-            from app.utils.topic_modeling import (
-                calculate_topic_diversity,
-                calculate_npmi,
-                calculate_embedding_density,
-                calculate_intra_topic_similarity
-            )
-
-            diversity, topic_words_list, _ = calculate_topic_diversity(topic_model)
-            npmi = calculate_npmi(docs, topic_words_list, topic_model.vectorizer_model)
-            ed = calculate_embedding_density(
-                embeddings=embeddings,
-                labels=np.array(topics),
-                topic_model=topic_model,
-                docs=docs,
-                vectorizer_model=topic_model.vectorizer_model
-            )
-            its = calculate_intra_topic_similarity(embeddings, np.array(topics))
-
+        if mode == "fast":
+            # Mode Cepat (Default): Lewati seluruh evaluasi metrik matematis berat (0ms latency)
             metrics = {
-                "topic_diversity": round(float(diversity), 4),
-                "c_npmi": round(float(npmi), 4) if npmi is not None else 0.0,
-                "embedding_density": round(float(ed), 4) if ed is not None else 0.0,
-                "intra_topic_similarity": round(float(its), 4) if its is not None else 0.0,
+                "topic_diversity": 0.0,
+                "c_npmi": 0.0,
+                "embedding_density": 0.0,
+                "intra_topic_similarity": 0.0,
             }
-            return metrics
+            elapsed_7 = "0ms"
+            event = {
+                "step_id": 7,
+                "status": "completed",
+                "time_elapsed": elapsed_7,
+                "skipped": True
+            }
+            progress_history[session_id].append(event)
+            await sse_manager.broadcast(session_id, event)
+        else:
+            # Mode Riset: Menghitung seluruh metrik evaluasi matematis secara mendalam
+            def run_bertopic_eval_only(topic_model, topics, embeddings):
+                from app.utils.topic_modeling import (
+                    calculate_topic_diversity,
+                    calculate_npmi,
+                    calculate_embedding_density,
+                    calculate_intra_topic_similarity
+                )
 
-        metrics = await anyio.to_thread.run_sync(
-            run_bertopic_eval_only, topic_model, topics, embeddings
-        )
-        elapsed_7 = f"{int((time.time() - start_t) * 1000)}ms"
+                diversity, topic_words_list, _ = calculate_topic_diversity(topic_model)
+                npmi = calculate_npmi(docs, topic_words_list, topic_model.vectorizer_model)
+                ed = calculate_embedding_density(
+                    embeddings=embeddings,
+                    labels=np.array(topics),
+                    topic_model=topic_model,
+                    docs=docs,
+                    vectorizer_model=topic_model.vectorizer_model
+                )
+                its = calculate_intra_topic_similarity(embeddings, np.array(topics))
 
-        event = {"step_id": 7, "status": "completed", "time_elapsed": elapsed_7}
-        progress_history[session_id].append(event)
-        await sse_manager.broadcast(session_id, event)
+                metrics = {
+                    "topic_diversity": round(float(diversity), 4),
+                    "c_npmi": round(float(npmi), 4) if npmi is not None else 0.0,
+                    "embedding_density": round(float(ed), 4) if ed is not None else 0.0,
+                    "intra_topic_similarity": round(float(its), 4) if its is not None else 0.0,
+                }
+                return metrics
+
+            metrics = await anyio.to_thread.run_sync(
+                run_bertopic_eval_only, topic_model, topics, embeddings
+            )
+            elapsed_7 = f"{int((time.time() - start_t) * 1000)}ms"
+
+            event = {"step_id": 7, "status": "completed", "time_elapsed": elapsed_7}
+            progress_history[session_id].append(event)
+            await sse_manager.broadcast(session_id, event)
 
         # 8. Step 8: Simpan hasil analisis di database dengan kunci session_id / jobId
         event = {"step_id": 8, "status": "running"}
@@ -330,7 +348,8 @@ async def run_analysis_pipeline_task(
             "topics": topics_list,
             "top_senders": top_senders,
             "active_dates": active_dates,
-            "active_hours": active_hours
+            "active_hours": active_hours,
+            "analysis_mode": mode
         }
 
         # Save summary result JSON
@@ -392,7 +411,8 @@ def get_results_summary(job_id: str) -> ResultsSummaryDTO:
             topics=topics,
             top_senders=top_senders,
             active_dates=active_dates,
-            active_hours=active_hours
+            active_hours=active_hours,
+            analysis_mode=data.get("analysis_mode", "fast")
         )
     except Exception as exc:
         raise HTTPException(

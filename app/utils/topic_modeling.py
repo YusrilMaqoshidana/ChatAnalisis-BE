@@ -14,8 +14,6 @@ from umap import UMAP
 from sklearn.cluster import Birch
 from sklearn.metrics.pairwise import cosine_similarity
 from bertopic import BERTopic
-from gensim.corpora.dictionary import Dictionary
-from gensim.models.coherencemodel import CoherenceModel
 import gc
 import torch
 
@@ -293,6 +291,11 @@ class BM25Representation:
             (word, float(score))
             for word, score in zip(feature_names, total_scores)
             if score > 0
+            and "_" not in word
+            and word not in STOPWORDS
+            and word not in EMOJI_WORDS
+            and not (word.startswith(":") and word.endswith(":"))
+            and len(word) > 1
         ]
         return sorted(scores, key=lambda x: x[1], reverse=True)[:top_n]
 
@@ -327,6 +330,9 @@ def calculate_npmi(texts: List[str], topic_words_list: List[List[str]], vectoriz
     if not topic_words_list:
         return None
     try:
+        from gensim.corpora.dictionary import Dictionary
+        from gensim.models.coherencemodel import CoherenceModel
+
         if vectorizer_model is not None and hasattr(vectorizer_model, 'build_analyzer'):
             analyzer = vectorizer_model.build_analyzer()
             tokenized = [analyzer(text) for text in texts]

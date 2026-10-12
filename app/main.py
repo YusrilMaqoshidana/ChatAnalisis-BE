@@ -11,13 +11,31 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from contextlib import asynccontextmanager
+
 from app.config import settings
 from app.api.routes import analysis
 from app.schemas import BaseResponse
 from app.middleware import RateLimitMiddleware, SecurityHeadersMiddleware
+from app.infrastructure.model_manager import get_model_manager
 
 
 logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifecycle manager untuk pre-warming model dan pembersihan memori."""
+    try:
+        logger.info("Melakukan warm-up IndoBERTweet pada startup...")
+        get_model_manager().load_model()
+    except Exception as exc:
+        logger.warning(f"Gagal melakukan pre-warm model pada startup: {exc}")
+    yield
+    try:
+        get_model_manager().cleanup()
+    except Exception:
+        pass
 
 
 def create_app() -> FastAPI:
@@ -29,6 +47,7 @@ def create_app() -> FastAPI:
         docs_url="/docs",
         redoc_url="/redoc",
         openapi_url="/openapi.json",
+        lifespan=lifespan,
     )
 
     app.add_exception_handler(HTTPException, _http_exception_handler)

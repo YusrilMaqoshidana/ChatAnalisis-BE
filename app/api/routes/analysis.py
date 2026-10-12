@@ -51,6 +51,7 @@ async def analyze_chat(
     session_id: str = Form(...),
     startDate: str = Form(None),
     endDate: str = Form(None),
+    mode: str = Form("fast"),
 ) -> BaseResponse[dict]:
     """
     Process Chat CSV file in background:
@@ -176,7 +177,8 @@ async def analyze_chat(
         analysis_service.run_analysis_pipeline_task,
         session_id,
         df,
-        original_csv_bytes
+        original_csv_bytes,
+        mode
     )
 
     return BaseResponse(

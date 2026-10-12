@@ -130,11 +130,33 @@ def clean_for_embedding(text: str) -> str:
     # Normalisasi spasi akhir
     return re.sub(r"\s+", " ", text).strip()
 
+def count_substantive_words(text: str) -> int:
+    """
+    Menghitung jumlah kata substantif dalam teks.
+    Mengabaikan stopword, token demojize emoji (format :name: atau bersimbol '_'),
+    angka murni, tanda baca, dan kata pendek <= 1 karakter.
+    """
+    if not text or pd.isna(text):
+        return 0
+    from app.utils.topic_modeling import STOPWORDS, EMOJI_WORDS
+    words = str(text).split()
+    substantive = []
+    for w in words:
+        clean = re.sub(r"[^\w]", "", w.lower()).strip()
+        if (
+            len(clean) > 1
+            and not clean.isdigit()
+            and "_" not in w
+            and not (w.startswith(":") and w.endswith(":"))
+            and clean not in STOPWORDS
+            and clean not in EMOJI_WORDS
+        ):
+            substantive.append(clean)
+    return len(substantive)
+
 def has_min_words(text: str, min_words: int = 3) -> bool:
-    """Check if the text has at least the minimum number of words."""
-    if pd.isna(text):
-        return False
-    return len(str(text).split()) >= min_words
+    """Check if the text has at least the minimum number of substantive words."""
+    return count_substantive_words(text) >= min_words
 
 def preprocess_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
@@ -207,7 +229,7 @@ def preprocess_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     # 4. Cleanup whitespace & filter data kosong
     df["Pesan_Preprocessed"] = df["Pesan_Preprocessed"].apply(lambda x: re.sub(r"\s+", " ", str(x)).strip())
 
-    # Filter data: minimal 3 kata pada kolom Pesan_Preprocessed agar data yang di-cluster memiliki substansi
-    df = df[df["Pesan_Preprocessed"].apply(lambda x: len(x.split()) >= 3)].copy()
+    # Filter data: minimal 3 kata substantif pada kolom Pesan_Preprocessed agar data yang di-cluster memiliki substansi
+    df = df[df["Pesan_Preprocessed"].apply(lambda x: count_substantive_words(x) >= 3)].copy()
 
     return df

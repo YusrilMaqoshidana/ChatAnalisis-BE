@@ -14,6 +14,8 @@ class Settings(BaseSettings):
 
     # --- Infrastructure ---
     PROGRESS_TTL_SECONDS: int = 86400
+    TORCH_DEVICE: str = "auto"
+    EMBEDDING_BATCH_SIZE: int = 64
 
     # --- CORS ---
     CORS_ORIGINS: list[str] = ["https://chatanalisis.yusrilmaqoshidana.my.id"]

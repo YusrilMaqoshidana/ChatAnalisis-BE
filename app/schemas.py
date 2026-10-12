@@ -40,6 +40,7 @@ class ResultsSummaryDTO(BaseModel):
     top_senders: List[SenderDTO]
     active_dates: List[DateActivityDTO]
     active_hours: List[HourActivityDTO]
+    analysis_mode: Optional[str] = "fast"
 
 class MessageDTO(BaseModel):
     message_id: str
