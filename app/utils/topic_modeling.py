@@ -261,7 +261,8 @@ class ImprovedBirch3Jurnal(Birch):
         return self.labels_
 
 
-# Alias for backward compatibility
+# Aliases for compatibility
+ImprovedBirch = ImprovedBirch3Jurnal
 BirchWithOutliers = ImprovedBirch3Jurnal
 
 class BM25Representation:
