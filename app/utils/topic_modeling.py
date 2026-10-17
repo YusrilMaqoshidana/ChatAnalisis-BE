@@ -167,8 +167,8 @@ def calculate_automatic_threshold(
             break
         T = T_new
 
-    # Scale to radius threshold per Alzu'Bi & Barham Table 4
-    return float(np.clip(T / 2.0, 0.20, 0.50))
+    # Scale to radius threshold with optimal fine-grained range [0.20, 0.25]
+    return float(np.clip(T / 2.0, 0.20, 0.25))
 
 
 class ImprovedBirch3Jurnal(Birch):
@@ -259,11 +259,6 @@ class ImprovedBirch3Jurnal(Birch):
     def fit_predict(self, X, y=None):
         self.fit(X, y)
         return self.labels_
-
-
-# Aliases for compatibility
-ImprovedBirch = ImprovedBirch3Jurnal
-BirchWithOutliers = ImprovedBirch3Jurnal
 
 class BM25Representation:
     def __init__(self, vectorizer=None, k1=1.5, b=0.75):
