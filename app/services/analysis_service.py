@@ -166,12 +166,12 @@ async def run_analysis_pipeline_task(
         start_t = time.time()
 
         def run_birch(reduced):
-            from app.utils.topic_modeling import BirchWithOutliers
-            birch_model = BirchWithOutliers(
-                threshold=0.25,
+            from app.utils.topic_modeling import ImprovedBirch3Jurnal
+            birch_model = ImprovedBirch3Jurnal(
+                threshold="auto",
                 branching_factor=50,
                 n_clusters=None,
-                outlier_percentile=95.0,
+                alpha=2.0,
                 min_cluster_size=5,
                 metric="cosine"
             )

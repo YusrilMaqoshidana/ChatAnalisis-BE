@@ -126,31 +126,82 @@ STOPWORDS = (
     | PLATFORM_NOISE
 )
 
-class BirchWithOutliers(Birch):
+def calculate_automatic_threshold(
+    X: np.ndarray,
+    sample_size: int = 1500,
+    max_iter: int = 100,
+    eps: float = 1e-4,
+) -> float:
     """
-    Custom BIRCH Clustering model with outlier detection using distance percentile thresholding
-    and dwarf cluster cleanup.
+    Automatic threshold initialization following Alzu'Bi & Barham (2022)
+    Algorithms 1, 2, and 3 (Iterative Ridler-Calvard thresholding on pairwise feature distances).
+    """
+    n = len(X)
+    if n > sample_size:
+        idx = np.random.choice(n, size=sample_size, replace=False)
+        X_sample = X[idx]
+    else:
+        X_sample = X
+
+    from sklearn.metrics.pairwise import euclidean_distances
+    dists = euclidean_distances(X_sample)
+    triu_idx = np.triu_indices(len(X_sample), k=1)
+    d = dists[triu_idx]
+
+    if len(d) == 0:
+        return 0.35
+
+    # Algorithm 1: initial threshold T(1) = mean(d)
+    T = float(np.mean(d))
+
+    # Algorithms 2 & 3: Iterative convergence (Ridler & Calvard, 1978)
+    for _ in range(max_iter):
+        below = d[d <= T]
+        above = d[d > T]
+        if len(below) == 0 or len(above) == 0:
+            break
+        mbt = np.mean(below)
+        mat = np.mean(above)
+        T_new = float((mbt + mat) / 2.0)
+        if abs(T_new - T) < eps:
+            break
+        T = T_new
+
+    # Scale to radius threshold per Alzu'Bi & Barham Table 4
+    return float(np.clip(T / 2.0, 0.20, 0.50))
+
+
+class ImprovedBirch3Jurnal(Birch):
+    """
+    Improved BIRCH synthesis based on:
+    1. Alzu'Bi & Barham (2022): Automatic threshold calculation via Iterative Mean Convergence (Algorithms 1, 2, 3)
+    2. Ramadhani et al. (2020): Dynamic threshold adaptation on CF-Leaf & outlier filtering for extreme distances
+    3. Muhajir et al. (2025): Distance-to-centroid cutoff matching the 1-5% outlier baseline
     """
     def __init__(
         self,
-        threshold: float = 0.5,
+        threshold="auto",
         branching_factor: int = 50,
         n_clusters=None,
-        outlier_percentile: float = 85.0, # top X% of furthest docs from cluster centroid defined as outliers
-        min_cluster_size: int = 5,        # clusters with sizes below this are discarded to -1
+        alpha: float = 2.0,           # 2-sigma distance-to-centroid cutoff
+        min_cluster_size: int = 5,    # Clean up dwarf clusters (Ramadhani 2020)
         metric: str = "cosine",
     ):
         super().__init__(
-            threshold=threshold,
+            threshold=0.5 if (threshold == "auto" or threshold is None) else threshold,
             branching_factor=branching_factor,
             n_clusters=n_clusters,
         )
-        self.outlier_percentile = outlier_percentile
+        self.auto_threshold = (threshold == "auto" or threshold is None)
+        self.alpha = alpha
         self.min_cluster_size = min_cluster_size
         self.metric = metric
-        self.labels_ = None
 
     def fit(self, X, y=None):
+        if self.auto_threshold:
+            self.threshold = calculate_automatic_threshold(X)
+            logger.info(f"[Alzu'Bi & Barham 2022] Auto-Threshold: {self.threshold:.4f}")
+
         super().fit(X, y)
         raw_labels = self.labels_.copy()
         unique_labels = np.unique(raw_labels)
@@ -181,24 +232,25 @@ class BirchWithOutliers(Birch):
             else:
                 distances[i] = np.linalg.norm(emb - centroid)
 
-        # 3. Percentile-based outlier filter per cluster
+        # 3. 2-Sigma Distance-to-Centroid Cutoff (Muhajir et al. 2025, Alzu'Bi & Barham 2022)
         for label in unique_labels:
             if label == -1:
                 continue
-            cluster_mask = raw_labels == label
+            cluster_mask = (raw_labels == label)
             cluster_dists = distances[cluster_mask]
 
-            if len(cluster_dists) > self.min_cluster_size:
-                thresh = np.percentile(cluster_dists, self.outlier_percentile)
-                outlier_indices = np.where(cluster_mask & (distances > thresh))[0]
+            if len(cluster_dists) >= 3:
+                mean_d = np.mean(cluster_dists)
+                std_d = np.std(cluster_dists)
+                tau_k = mean_d + self.alpha * std_d
+                outlier_indices = np.where(cluster_mask & (distances > tau_k))[0]
                 final_labels[outlier_indices] = -1
 
-        # 4. Clean up dwarf clusters
+        # 4. Dwarf cluster cleanup (Ramadhani et al. 2020)
         for label in np.unique(final_labels):
             if label == -1:
                 continue
-            cluster_size = np.sum(final_labels == label)
-            if cluster_size < self.min_cluster_size:
+            if np.sum(final_labels == label) < self.min_cluster_size:
                 final_labels[final_labels == label] = -1
 
         self.labels_ = final_labels
@@ -207,6 +259,10 @@ class BirchWithOutliers(Birch):
     def fit_predict(self, X, y=None):
         self.fit(X, y)
         return self.labels_
+
+
+# Alias for backward compatibility
+BirchWithOutliers = ImprovedBirch3Jurnal
 
 class BM25Representation:
     def __init__(self, vectorizer=None, k1=1.5, b=0.75):
@@ -531,12 +587,12 @@ def run_topic_modeling_pipeline(
     # 2. Build UMAP
     umap_model = UMAP(**SHARED_UMAP_PARAMS)
 
-    # 3. Build BIRCH Clustering with outliers and proposed params
-    birch_model = BirchWithOutliers(
-        threshold=0.25,
+    # 3. Build BIRCH Clustering (ImprovedBirch3Jurnal: Alzu'Bi & Barham 2022, Ramadhani 2020, Muhajir 2025)
+    birch_model = ImprovedBirch3Jurnal(
+        threshold="auto",
         branching_factor=50,
         n_clusters=None,
-        outlier_percentile=95.0,
+        alpha=2.0,
         min_cluster_size=5,
         metric="cosine"
     )
