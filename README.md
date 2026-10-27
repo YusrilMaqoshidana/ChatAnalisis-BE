@@ -13,16 +13,22 @@ app/
 ├── api/                       <-- PRESENTATION LAYER (Routing)
 │   └── routes/
 │       └── analysis.py        <-- HTTP Endpoint (REST) dan Server-Sent Events (SSE) router
-├── services/                  <-- APPLICATION LAYER (Business Use Cases)
-│   └── analysis_service.py    <-- Orchestration background pipeline, formatting, dan logika bisnis utama
+├── services/                  <-- APPLICATION LAYER (Business Use Cases & Orchestration)
+│   ├── analysis_service.py    <-- Orchestration background pipeline & Facade API
+│   ├── analysis_result_service.py <-- Query/Repository service untuk retrieval & manipulasi DTO hasil
+│   ├── progress_tracker.py    <-- Reporter pattern untuk manajemen status & SSE progress tracking
+│   └── topic_modeling_service.py <-- Domain service untuk eksekusi NLP & Machine Learning (BERTopic)
 ├── infrastructure/            <-- ADAPTERS LAYER (Storage & Events)
 │   ├── storage.py             <-- Adapter untuk manipulasi file ke local filesystem (direktori storage/)
-│   └── sse.py                 <-- Broadcast manager untuk Server-Sent Events dan progress tracker
+│   ├── sse.py                 <-- Broadcast manager untuk Server-Sent Events
+│   └── model_manager.py       <-- Singleton IndoBERTweet SentenceTransformer model manager
 ├── utils/                     <-- PURE DOMAIN-AGNOSTIC CALCULATIONS (Helpers)
 │   ├── preprocessing.py       <-- Tokenisasi, stopword removal, slang conversion, dan Sastrawi stemming
 │   ├── topic_modeling.py      <-- Parameter UMAP, BIRCH clustering, dan kustomisasi c-TF-IDF (BM25)
 │   ├── daily_graph.py         <-- Perhitungan aktivitas harian chat
-│   └── leaderboard.py         <-- Perhitungan leaderboard pengirim teraktif
+│   ├── hourly_graph.py        <-- Perhitungan aktivitas jam chat (0-23)
+│   ├── leaderboard.py         <-- Perhitungan leaderboard pengirim teraktif
+│   └── date_utils.py          <-- Utilitas parsing tanggal multi-format
 ├── schemas.py                 <-- DTOs & Validation (Pydantic models untuk request & response)
 ├── config.py                  <-- Global configurations & Environment settings loader
 └── main.py                    <-- App factory, middleware (CORS), dan global exception handlers
